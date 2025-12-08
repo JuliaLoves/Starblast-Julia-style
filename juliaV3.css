@@ -34,12 +34,23 @@ body {
 }
 
 .inputwrapper {
+    transition: all .5s ease-out;
     background: var(--glass-bg);
     box-shadow: var(--shadow-soft);
     border-radius: var(--radius-md);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
     border: 1px solid hsla(var(--main-hue), 80%, 80%, 0.18);
+}
+
+.inputwrapper:focus-within {
+    border-color: hsla(var(--main-hue), 90%, 80%, 1);
+    box-shadow:
+        0 0 0 1px hsla(var(--main-hue), 100%, 80%, 0.9),
+        0 0 12px 2px hsla(var(--main-hue), 90%, 80%, 0.65);
+    background: linear-gradient(135deg,
+            hsla(var(--main-hue), 30%, 24%, 0.95) 0%,
+            hsla(var(--main-hue), 40%, 24%, 0.95) 100%);
 }
 
 .inputwrapper img {
@@ -59,21 +70,6 @@ body {
 
 #colors span {
     border-radius: 999px;
-}
-
-.inputwrapper input[type="text"]:hover {
-    border-color: hsla(var(--main-hue), 70%, 75%, 0.85);
-}
-
-.inputwrapper input[type="text"]:focus {
-    outline: none;
-    border-color: hsla(var(--main-hue), 90%, 80%, 1);
-    box-shadow:
-        0 0 0 1px hsla(var(--main-hue), 100%, 80%, 0.9),
-        0 0 12px 2px hsla(var(--main-hue), 90%, 80%, 0.65);
-    background: linear-gradient(135deg,
-            hsla(var(--main-hue), 30%, 24%, 0.95) 0%,
-            hsla(var(--main-hue), 40%, 24%, 0.95) 100%);
 }
 
 #play #game_modes {
