@@ -59,7 +59,6 @@
     }, MESSAGE_LIFETIME);
   }
 
-  // --- Chat Input Styling ---
   const inputWrap = document.createElement('div');
   Object.assign(inputWrap.style, {
     position: 'fixed',
@@ -70,12 +69,12 @@
     display: 'none',
     gap: '8px',
     alignItems: 'center',
-    background: 'rgba(0,0,0,.65)', // Shared Style
+    background: 'rgba(0,0,0,.65)',
     padding: '8px 10px',
     borderRadius: '10px',
-    backdropFilter: 'blur(5px)',    // Shared Style
+    backdropFilter: 'blur(5px)',
     boxShadow: '0 3px 10px rgba(0,0,0,.45)',
-    border: '1px solid rgba(255,255,255,.15)' // Shared Style
+    border: '1px solid rgba(255,255,255,.15)'
   });
   const hint = document.createElement('span');
   hint.textContent = 'Alt+C — open/close • Enter — send';
@@ -92,7 +91,6 @@
     spellcheck: false,
     autocomplete: 'off'
   });
-  // Shared Input Style Function
   const applyInputStyle = (el) => {
     Object.assign(el.style, {
       outline: 'none',
@@ -114,7 +112,6 @@
   const sendBtn = document.createElement('button');
   sendBtn.textContent = 'Send';
   
-  // Shared Button Style Function
   const applyButtonStyle = (el, primary = true) => {
     Object.assign(el.style, {
       border: 'none',
@@ -143,13 +140,12 @@
   inputWrap.appendChild(input);
   inputWrap.appendChild(sendBtn);
 
-  // --- Auth Modal Styling (Updated to match Chat Input) ---
   const authModal = document.createElement('div');
   Object.assign(authModal.style, {
     position: 'fixed',
     top: '0', left: '0', width: '100%', height: '100%',
     zIndex: '2147483648',
-    background: 'rgba(0,0,0,0.6)', // Slightly darker dim for full screen
+    background: 'rgba(0,0,0,0.6)',
     backdropFilter: 'blur(2px)',
     display: 'none',
     justifyContent: 'center',
@@ -157,12 +153,11 @@
   });
 
   const authBox = document.createElement('div');
-  // Matching inputWrap style container
   Object.assign(authBox.style, {
-    background: 'rgba(0,0,0,.65)', // Match chat input
-    border: '1px solid rgba(255,255,255,.15)', // Match chat input
-    borderRadius: '10px', // Match chat input
-    backdropFilter: 'blur(5px)', // Match chat input
+    background: 'rgba(0,0,0,.65)',
+    border: '1px solid rgba(255,255,255,.15)',
+    borderRadius: '10px',
+    backdropFilter: 'blur(5px)',
     padding: '20px 24px',
     display: 'flex',
     flexDirection: 'column',
@@ -175,9 +170,9 @@
   authTitle.textContent = 'Authorization';
   Object.assign(authTitle.style, {
     margin: '0 0 4px 0',
-    color: '#ddd', // Match hint color
+    color: '#ddd',
     fontFamily: 'Play, sans-serif',
-    fontSize: '13pt', // Slightly larger than hint
+    fontSize: '13pt',
     textAlign: 'center',
     fontWeight: 'normal'
   });
@@ -185,7 +180,7 @@
   const authInput = document.createElement('input');
   authInput.type = 'password';
   authInput.placeholder = 'PIN code';
-  applyInputStyle(authInput); // Match chat input style exactly
+  applyInputStyle(authInput);
   authInput.style.textAlign = 'center';
   authInput.style.letterSpacing = '2px';
 
@@ -196,12 +191,12 @@
 
   const authBtn = document.createElement('button');
   authBtn.textContent = 'Login';
-  applyButtonStyle(authBtn, true); // Match send button
+  applyButtonStyle(authBtn, true);
   authBtn.style.flex = '1';
 
   const authCancel = document.createElement('button');
   authCancel.textContent = 'Cancel';
-  applyButtonStyle(authCancel, false); // Secondary style
+  applyButtonStyle(authCancel, false);
   authCancel.style.flex = '1';
   authCancel.style.fontSize = '11pt';
 
