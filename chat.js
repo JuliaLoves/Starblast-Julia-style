@@ -1,13 +1,19 @@
 (function () {
   'use strict';
 
+  const CHAT_SERVER_URL = 'wss://chat-server-df5x.onrender.com';
+
   const playerInfo = {};
   let ownId = null;
   let wsRef = null;
   let isInputOpen = false;
+  let chatWs = null;
+  let chatConnected = false;
+  let currentGameKey = null;
+  let chatReconnectTimer = null;
+  let hasJoinedChat = false;
 
   const chatParticipants = new Set();
-
   const now = () => Date.now();
 
   const overlay = document.createElement('div');
@@ -53,6 +59,7 @@
     }, MESSAGE_LIFETIME);
   }
 
+  // --- Chat Input Styling ---
   const inputWrap = document.createElement('div');
   Object.assign(inputWrap.style, {
     position: 'fixed',
@@ -63,15 +70,15 @@
     display: 'none',
     gap: '8px',
     alignItems: 'center',
-    background: 'rgba(0,0,0,.65)',
+    background: 'rgba(0,0,0,.65)', // Shared Style
     padding: '8px 10px',
     borderRadius: '10px',
-    backdropFilter: 'blur(5px)',
+    backdropFilter: 'blur(5px)',    // Shared Style
     boxShadow: '0 3px 10px rgba(0,0,0,.45)',
-    border: '1px solid rgba(255,255,255,.15)'
+    border: '1px solid rgba(255,255,255,.15)' // Shared Style
   });
   const hint = document.createElement('span');
-  hint.textContent = 'Shift+C — open/close • Enter — send';
+  hint.textContent = 'Alt+C — open/close • Enter — send';
   Object.assign(hint.style, {
     color: '#ddd',
     fontFamily: 'Play, system-ui, sans-serif',
@@ -85,35 +92,163 @@
     spellcheck: false,
     autocomplete: 'off'
   });
-  Object.assign(input.style, {
-    width: '360px',
-    maxWidth: '64vw',
-    outline: 'none',
-    border: '1px solid rgba(255,255,255,.28)',
-    background: 'rgba(0,0,0,.5)',
-    color: 'white',
-    padding: '8px 10px',
-    borderRadius: '6px',
-    fontSize: '12pt',
-    fontFamily: 'Play, system-ui, sans-serif',
-    boxShadow: '0 1px 3px rgba(0,0,0,.4)'
-  });
+  // Shared Input Style Function
+  const applyInputStyle = (el) => {
+    Object.assign(el.style, {
+      outline: 'none',
+      border: '1px solid rgba(255,255,255,.28)',
+      background: 'rgba(0,0,0,.5)',
+      color: 'white',
+      padding: '8px 10px',
+      borderRadius: '6px',
+      fontSize: '12pt',
+      fontFamily: 'Play, system-ui, sans-serif',
+      boxShadow: '0 1px 3px rgba(0,0,0,.4)'
+    });
+  };
+  
+  applyInputStyle(input);
+  input.style.width = '360px';
+  input.style.maxWidth = '64vw';
+
   const sendBtn = document.createElement('button');
   sendBtn.textContent = 'Send';
-  Object.assign(sendBtn.style, {
-    border: 'none',
-    padding: '8px 12px',
-    borderRadius: '6px',
-    color: 'white',
-    background: 'linear-gradient(135deg, hsl(310,80%,55%), hsl(280,80%,50%))',
-    cursor: 'pointer',
-    fontSize: '12pt',
-    fontFamily: 'Play, system-ui, sans-serif',
-    boxShadow: '0 2px 6px rgba(0,0,0,.45)'
-  });
+  
+  // Shared Button Style Function
+  const applyButtonStyle = (el, primary = true) => {
+    Object.assign(el.style, {
+      border: 'none',
+      padding: '8px 12px',
+      borderRadius: '6px',
+      color: 'white',
+      cursor: 'pointer',
+      fontSize: '12pt',
+      fontFamily: 'Play, system-ui, sans-serif',
+      boxShadow: '0 2px 6px rgba(0,0,0,.45)',
+      fontWeight: 'normal'
+    });
+    if (primary) {
+        el.style.background = 'linear-gradient(135deg, hsl(310,80%,55%), hsl(280,80%,50%))';
+    } else {
+        el.style.background = 'transparent';
+        el.style.border = '1px solid rgba(255,255,255,.2)';
+        el.style.color = '#ccc';
+        el.style.boxShadow = 'none';
+    }
+  };
+
+  applyButtonStyle(sendBtn);
+
   inputWrap.appendChild(hint);
   inputWrap.appendChild(input);
   inputWrap.appendChild(sendBtn);
+
+  // --- Auth Modal Styling (Updated to match Chat Input) ---
+  const authModal = document.createElement('div');
+  Object.assign(authModal.style, {
+    position: 'fixed',
+    top: '0', left: '0', width: '100%', height: '100%',
+    zIndex: '2147483648',
+    background: 'rgba(0,0,0,0.6)', // Slightly darker dim for full screen
+    backdropFilter: 'blur(2px)',
+    display: 'none',
+    justifyContent: 'center',
+    alignItems: 'center'
+  });
+
+  const authBox = document.createElement('div');
+  // Matching inputWrap style container
+  Object.assign(authBox.style, {
+    background: 'rgba(0,0,0,.65)', // Match chat input
+    border: '1px solid rgba(255,255,255,.15)', // Match chat input
+    borderRadius: '10px', // Match chat input
+    backdropFilter: 'blur(5px)', // Match chat input
+    padding: '20px 24px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+    boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+    width: '280px'
+  });
+
+  const authTitle = document.createElement('h3');
+  authTitle.textContent = 'Authorization';
+  Object.assign(authTitle.style, {
+    margin: '0 0 4px 0',
+    color: '#ddd', // Match hint color
+    fontFamily: 'Play, sans-serif',
+    fontSize: '13pt', // Slightly larger than hint
+    textAlign: 'center',
+    fontWeight: 'normal'
+  });
+
+  const authInput = document.createElement('input');
+  authInput.type = 'password';
+  authInput.placeholder = 'PIN code';
+  applyInputStyle(authInput); // Match chat input style exactly
+  authInput.style.textAlign = 'center';
+  authInput.style.letterSpacing = '2px';
+
+  const btnRow = document.createElement('div');
+  btnRow.style.display = 'flex';
+  btnRow.style.gap = '8px';
+  btnRow.style.marginTop = '4px';
+
+  const authBtn = document.createElement('button');
+  authBtn.textContent = 'Login';
+  applyButtonStyle(authBtn, true); // Match send button
+  authBtn.style.flex = '1';
+
+  const authCancel = document.createElement('button');
+  authCancel.textContent = 'Cancel';
+  applyButtonStyle(authCancel, false); // Secondary style
+  authCancel.style.flex = '1';
+  authCancel.style.fontSize = '11pt';
+
+  authBox.appendChild(authTitle);
+  authBox.appendChild(authInput);
+  btnRow.appendChild(authBtn);
+  btnRow.appendChild(authCancel);
+  authBox.appendChild(btnRow);
+  authModal.appendChild(authBox);
+
+  let authResolve = null;
+
+  function showAuthModal() {
+    return new Promise((resolve) => {
+        if (document.body && !document.getElementById('juliaAuthModal')) {
+            authModal.id = 'juliaAuthModal';
+            document.body.appendChild(authModal);
+        }
+        authModal.style.display = 'flex';
+        authInput.value = '';
+        authInput.focus();
+        authResolve = resolve;
+    });
+  }
+
+  function hideAuthModal() {
+    authModal.style.display = 'none';
+    authResolve = null;
+  }
+
+  authBtn.onclick = () => {
+    const val = authInput.value.trim();
+    if (val && authResolve) {
+        authResolve(val);
+        hideAuthModal();
+    }
+  };
+
+  authCancel.onclick = () => {
+    if (authResolve) authResolve(null);
+    hideAuthModal();
+  };
+
+  authInput.onkeydown = (e) => {
+    if (e.key === 'Enter') authBtn.click();
+    if (e.key === 'Escape') authCancel.click();
+  };
 
   function anchorOverlayToCanvas() {
     const canvas = document.querySelector('canvas');
@@ -168,6 +303,10 @@
       inputWrap.id = 'juliaChatInput';
       document.body.appendChild(inputWrap);
     }
+    if (!document.getElementById('juliaAuthModal')) {
+        authModal.id = 'juliaAuthModal';
+        document.body.appendChild(authModal);
+    }
   }
 
   const uiInterval = setInterval(() => {
@@ -175,10 +314,11 @@
     if (overlay.parentNode) clearInterval(uiInterval);
   }, 50);
 
-  let mqttReady = false;
-
   function openChatInput() {
-    if (!mqttReady) return;
+    if (!chatConnected) {
+        ensureChatClient();
+        return;
+    }
     mountUI();
     inputWrap.style.display = 'flex';
     isInputOpen = true;
@@ -200,7 +340,7 @@
   document.addEventListener('keydown', (e) => {
     const target = e.target;
     const ourInput = target === input;
-    if (e.shiftKey && (e.code === 'KeyC' || (e.key && e.key.toLowerCase() === 'c'))) {
+    if (e.altKey && (e.code === 'KeyC' || (e.key && e.key.toLowerCase() === 'c'))) {
       e.preventDefault();
       e.stopPropagation();
       toggleChatInput();
@@ -224,142 +364,157 @@
       e.stopPropagation();
     }
   }, true);
+  
+  function setAuthCookie(pin) {
+    const d = new Date();
+    d.setTime(d.getTime() + (30 * 24 * 60 * 60 * 1000)); 
+    document.cookie = "chat_pin=" + encodeURIComponent(pin) + ";expires=" + d.toUTCString() + ";path=/";
+  }
 
-  // --- CHANGED CONFIGURATION HERE ---
-  // Using WSS (WebSocket TLS) port 19392 for browser compatibility
-  const MQTT_URL = 'wss://m2.wqtt.ru:19392'; 
-  const MQTT_USER_ID = 'u_B8JXZU';
-  const MQTT_USERNAME = 'u_B8JXZU';
-  const MQTT_PASSWORD = 'UTk4FWqg';
-  // ----------------------------------
+  function getAuthCookie() {
+    const name = "chat_pin=";
+    const ca = document.cookie.split(';');
+    for(let i = 0; i < ca.length; i++) {
+      let c = ca[i];
+      while (c.charAt(0) === ' ') c = c.substring(1);
+      if (c.indexOf(name) === 0) return decodeURIComponent(c.substring(name.length, c.length));
+    }
+    return "";
+  }
 
-  const MQTT_MIN_INTERVAL_MS = 1000;
-  let mqttClient = null;
-  let mqttCurrentTopic = null;
-  let currentGameKey = null;
-  let lastMqttSend = 0;
-  let presenceJoined = false;
+  async function getOrAskPin() {
+      let savedPin = getAuthCookie();
+      if (savedPin && savedPin.length > 0) return savedPin;
+      
+      const userPin = await showAuthModal();
+      if (userPin && userPin.length > 0) return userPin;
+      return null;
+  }
 
-  function ensureMqttClient() {
-    if (mqttClient) return;
-    const clientId = 'jchat_' + Math.random().toString(16).slice(2);
-    mqttClient = globalThis.mqtt.connect(MQTT_URL, {
-      clientId: clientId,
-      username: MQTT_USERNAME,
-      password: MQTT_PASSWORD,
-      clean: true,
-      reconnectPeriod: 1000,
-      connectTimeout: 5000
-    });
-    mqttClient.on('error', (err) => {
-      console.error('[MQTT] error', err && err.message, err);
-    });
-    mqttClient.on('connect', () => {
-      mqttReady = true;
-      updateMqttSubscription();
-      trySendJoinPresence();
-    });
-    mqttClient.on('message', (topic, payload) => {
-      let text = '';
-      try { text = payload.toString(); } catch { return; }
-      let data = null;
-      try { data = JSON.parse(text); } catch { return; }
-      if (!data || typeof data.type !== 'string') return;
-      if (data.game && currentGameKey && data.game !== currentGameKey) return;
-      if (data.type === 'chat') {
-        if (typeof data.text !== 'string') return;
-        const senderId = data.id != null ? (data.id >>> 0) : 0;
-        chatParticipants.add(senderId);
-        const info = playerInfo[senderId] || {};
-        const isSelf = ownId != null && senderId === ownId;
-        const who = isSelf ? 'You' : (info.name || data.name || ('ID' + senderId));
-        const hue = isSelf ? 310 : (info.hue != null ? info.hue : data.hue);
-        if (data.text.trim().length > 0) pushOverlayLine(who, data.text, hue, 'chat');
-      } else if (data.type === 'presence') {
-        const senderId = data.id != null ? (data.id >>> 0) : 0;
-        const info = playerInfo[senderId] || {};
-        const isSelf = ownId != null && senderId === ownId;
-        if (data.state === 'join') {
-          chatParticipants.add(senderId);
-          if (!isSelf) {
-            const whoJ = info.name || data.name || ('ID' + senderId);
-            const hueJ = info.hue != null ? info.hue : data.hue;
-            pushOverlayLine(whoJ, 'joined chat', hueJ, 'presence');
-          }
-        } else if (data.state === 'leave') {
-          chatParticipants.delete(senderId);
-          if (!isSelf) {
-            const whoL = info.name || data.name || ('ID' + senderId);
-            const hueL = info.hue != null ? info.hue : data.hue;
-            pushOverlayLine(whoL, 'left chat', hueL, 'presence');
-          }
+  async function ensureChatClient() {
+    if (chatWs && (chatWs.readyState === WebSocket.OPEN || chatWs.readyState === WebSocket.CONNECTING)) return;
+    
+    const pin = await getOrAskPin();
+    if (!pin) {
+        console.log('[JuliaChat] Access denied: No PIN entered');
+        return; 
+    }
+
+    chatWs = new WebSocket(CHAT_SERVER_URL);
+    chatWs._tempPin = pin; 
+
+    chatWs.onopen = () => {
+      console.log('[JuliaChat] Connecting...');
+      chatWs.send(JSON.stringify({ type: 'auth', pin: pin }));
+    };
+
+    chatWs.onmessage = (event) => {
+        let data;
+        try { data = JSON.parse(event.data); } catch(e) { return; }
+
+        if (data.type === 'auth_success') {
+            chatConnected = true;
+            console.log('[JuliaChat] Auth success!');
+            if (chatWs._tempPin) {
+                setAuthCookie(chatWs._tempPin);
+                chatWs._tempPin = null;
+            }
+            trySendJoinPresence(); 
         }
-      }
-    });
-  }
+        else if (data.type === 'error') {
+            console.error('[JuliaChat] Error:', data.message);
+            if (data.message === 'Invalid PIN') {
+                document.cookie = "chat_pin=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+                chatWs.close();
+                alert("Invalid PIN. Please try again.");
+            }
+        }
+        else if (data.type === 'chat') {
+            const senderId = data.id != null ? (data.id >>> 0) : 0;
+            chatParticipants.add(senderId);
+            
+            const info = playerInfo[senderId] || {};
+            const isSelf = ownId != null && senderId === ownId;
+            const who = isSelf ? 'You' : (info.name || data.name || ('ID' + senderId));
+            const hue = isSelf ? 310 : (info.hue != null ? info.hue : data.hue);
+            
+            if (data.text) pushOverlayLine(who, data.text, hue, 'chat');
+        }
+        else if (data.type === 'presence') {
+            const senderId = data.id != null ? (data.id >>> 0) : 0;
+            const info = playerInfo[senderId] || {};
+            const isSelf = ownId != null && senderId === ownId;
+            
+            if (data.state === 'join') {
+                chatParticipants.add(senderId);
+                if (!isSelf) {
+                    const whoJ = info.name || data.name || ('ID' + senderId);
+                    const hueJ = info.hue != null ? info.hue : data.hue;
+                    pushOverlayLine(whoJ, 'joined chat', hueJ, 'presence');
+                }
+            } else if (data.state === 'leave') {
+                chatParticipants.delete(senderId);
+                if (!isSelf) {
+                      const whoL = info.name || data.name || ('ID' + senderId);
+                      pushOverlayLine(whoL, 'left chat', null, 'presence');
+                }
+            }
+        }
+    };
 
-  function updateMqttSubscription() {
-    if (!mqttClient || !mqttClient.connected) return;
-    if (!currentGameKey) return;
-    const topic = MQTT_USER_ID + '/julia_chat/' + currentGameKey;
-    if (topic === mqttCurrentTopic) return;
-    if (mqttCurrentTopic) mqttClient.unsubscribe(mqttCurrentTopic);
-    mqttCurrentTopic = topic;
-    mqttClient.subscribe(mqttCurrentTopic);
-  }
-
-  function publishMqttPayload(obj) {
-    if (!obj) return;
-    ensureMqttClient();
-    if (!mqttClient || !mqttClient.connected) return;
-    if (!currentGameKey) return;
-    if (!mqttCurrentTopic) updateMqttSubscription();
-    if (!mqttCurrentTopic) return;
-    const t = now();
-    if (t - lastMqttSend < MQTT_MIN_INTERVAL_MS) return;
-    lastMqttSend = t;
-    mqttClient.publish(mqttCurrentTopic, JSON.stringify(obj));
+    chatWs.onclose = () => {
+        chatConnected = false;
+        hasJoinedChat = false;
+        chatWs = null;
+        
+        if (getAuthCookie().length > 0) {
+            if (!chatReconnectTimer) {
+                chatReconnectTimer = setTimeout(() => {
+                    chatReconnectTimer = null;
+                    ensureChatClient();
+                }, 5000);
+            }
+        }
+    };
   }
 
   function trySendJoinPresence() {
-    if (presenceJoined) return;
-    if (!mqttClient || !mqttClient.connected) return;
-    if (!currentGameKey) return;
-    if (ownId == null) return;
+    if (!chatWs || !chatConnected) return;
+    if (!currentGameKey || ownId == null) return;
+    if (hasJoinedChat) return; 
+
     const info = playerInfo[ownId] || {};
-    const payload = {
-      type: 'presence',
-      state: 'join',
+    chatWs.send(JSON.stringify({
+      type: 'join',
+      game: currentGameKey,
       id: ownId,
-      name: info.name || null,
-      hue: info.hue != null ? info.hue : null,
-      game: currentGameKey
-    };
-    publishMqttPayload(payload);
+      name: info.name || 'Unknown',
+      hue: info.hue || 0
+    }));
+    hasJoinedChat = true;
     chatParticipants.add(ownId);
-    presenceJoined = true;
   }
 
-  function sendMqttChat(text) {
+  function sendChatText(text) {
     if (!text) return;
-    if (!mqttReady) return;
-    const info = ownId != null ? (playerInfo[ownId] || {}) : {};
-    const payload = {
+    if (!chatConnected) {
+        ensureChatClient();
+        return;
+    }
+    chatWs.send(JSON.stringify({
       type: 'chat',
-      id: ownId,
-      name: info.name || null,
-      hue: info.hue != null ? info.hue : null,
-      text: String(text),
-      game: currentGameKey
-    };
-    publishMqttPayload(payload);
+      text: String(text)
+    }));
   }
 
   function trySendFromInput() {
-    if (!mqttReady) return;
+    if (!chatConnected) {
+        ensureChatClient();
+        return;
+    }
     const text = input.value;
     if (!text) return;
-    sendMqttChat(text);
+    sendChatText(text);
     input.value = '';
   }
 
@@ -379,50 +534,60 @@
   window.WebSocket = function (...args) {
     const url = args[0];
     const ws = new OrigWS(...args);
-    // Modified check to include the new domain if necessary, or simply allow the original behavior
-    if (typeof url === 'string' && (url.indexOf('srv2.clusterfly.ru') !== -1 || url.indexOf('m2.wqtt.ru') !== -1)) {
-      return ws;
+
+    if (typeof url === 'string' && url.includes('onrender.com')) {
+        return ws;
     }
-    initSocket(ws);
+    
+    initGameSocketHook(ws);
     wsRef = ws;
     return ws;
   };
   window.WebSocket.prototype = OrigWS.prototype;
   Object.setPrototypeOf(window.WebSocket, OrigWS);
 
-  function initSocket(ws) {
+  function initGameSocketHook(ws) {
     ws.addEventListener('message', (ev) => {
       if (typeof ev.data !== 'string') return;
       let msg;
       try { msg = JSON.parse(ev.data); } catch { return; }
+      
       if (msg && msg.name === 'welcome' && msg.data) {
-        ensureMqttClient();
+        ensureChatClient();
+        
         const d = msg.data;
         const gName = String(d.name ?? 'unknown');
         const gId = d.systemid != null ? String(d.systemid) : '0';
         currentGameKey = gName + ':' + gId;
-        updateMqttSubscription();
-        trySendJoinPresence();
+        
+        hasJoinedChat = false; 
+        setTimeout(trySendJoinPresence, 1000);
         setTimeout(anchorOverlayToCanvas, 500);
       }
+      
       if (msg?.name === 'entered' && msg.data?.shipid != null) {
         ownId = msg.data.shipid >>> 0;
         trySendJoinPresence();
       }
+      
       if (msg?.name === 'player_name' && msg.data) {
         const d = msg.data;
         playerInfo[d.id] = { name: d.player_name, hue: d.hue, custom: d.custom || {} };
       }
+      
       if (msg?.name === 'shipgone' && msg.data != null) {
         const goneId = msg.data >>> 0;
         if (!chatParticipants.has(goneId)) return;
         const info = playerInfo[goneId] || {};
         const isSelf = ownId != null && goneId === ownId;
+        
         if (isSelf) {
           chatParticipants.delete(goneId);
           closeChatInput();
+          hasJoinedChat = false;
           return;
         }
+        
         const who = info.name || ('ID' + goneId);
         const hue = info.hue != null ? info.hue : null;
         pushOverlayLine(who, 'left game', hue, 'presence');
