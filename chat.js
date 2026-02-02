@@ -225,10 +225,14 @@
     }
   }, true);
 
-  const MQTT_URL = 'wss://srv2.clusterfly.ru:9994';
-  const MQTT_USER_ID = 'user_2ccabc76';
-  const MQTT_USERNAME = 'user_2ccabc76';
-  const MQTT_PASSWORD = 'MDLQdxESxVWxD';
+  // --- CHANGED CONFIGURATION HERE ---
+  // Using WSS (WebSocket TLS) port 19392 for browser compatibility
+  const MQTT_URL = 'wss://m2.wqtt.ru:19392'; 
+  const MQTT_USER_ID = 'u_B8JXZU';
+  const MQTT_USERNAME = 'u_B8JXZU';
+  const MQTT_PASSWORD = 'UTk4FWqg';
+  // ----------------------------------
+
   const MQTT_MIN_INTERVAL_MS = 1000;
   let mqttClient = null;
   let mqttCurrentTopic = null;
@@ -375,7 +379,8 @@
   window.WebSocket = function (...args) {
     const url = args[0];
     const ws = new OrigWS(...args);
-    if (typeof url === 'string' && url.indexOf('srv2.clusterfly.ru') !== -1) {
+    // Modified check to include the new domain if necessary, or simply allow the original behavior
+    if (typeof url === 'string' && (url.indexOf('srv2.clusterfly.ru') !== -1 || url.indexOf('m2.wqtt.ru') !== -1)) {
       return ws;
     }
     initSocket(ws);
