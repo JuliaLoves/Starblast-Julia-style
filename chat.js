@@ -3,23 +3,20 @@
 
   const CHAT_SERVER_URL = 'wss://chat-server-df5x.onrender.com';
 
-  const playerInfo = {};
   let ownId = null;
-  let wsRef = null;
-  let isInputOpen = false;
+  let selfName = 'Unknown';
+  let selfHue = 0;
+
   let chatWs = null;
   let chatConnected = false;
   let currentGameKey = null;
   let chatReconnectTimer = null;
   let hasJoinedChat = false;
   let isAuthOpen = false;
+  let shouldReconnect = true;
 
-  function isAuthVisible() {
-    return authModal && authModal.style.display !== 'none';
-  }
-
-  const chatParticipants = new Set();
   const now = () => Date.now();
+  const chatParticipants = new Set();
 
   const overlay = document.createElement('div');
   overlay.id = 'juliaChatOverlay';
@@ -37,11 +34,14 @@
     row.style.padding = '3px 6px';
     row.style.borderRadius = '6px';
     row.style.background = 'rgba(0,0,0,.35)';
+
     const nameSpan = document.createElement('span');
     nameSpan.textContent = who + ': ';
     nameSpan.style.fontWeight = '600';
+
     const msgSpan = document.createElement('span');
     msgSpan.textContent = text;
+
     if (kind === 'presence') {
       nameSpan.style.color = '#d8c455';
       msgSpan.style.color = '#d8c455';
@@ -51,10 +51,13 @@
       nameSpan.style.color = typeof hue === 'number' ? `hsl(${hue},80%,60%)` : 'hsl(0,0%,85%)';
       msgSpan.style.color = 'hsl(0,0%,95%)';
     }
+
     row.appendChild(nameSpan);
     row.appendChild(msgSpan);
     list.appendChild(row);
+
     while (list.childElementCount > MAX_LINES) list.firstElementChild?.remove();
+
     const born = now();
     setTimeout(() => {
       if (now() - born >= MESSAGE_LIFETIME) {
@@ -81,6 +84,7 @@
     boxShadow: '0 3px 10px rgba(0,0,0,.45)',
     border: '1px solid rgba(255,255,255,.15)'
   });
+
   const hint = document.createElement('span');
   hint.textContent = 'Alt+C — open/close • Enter — send';
   Object.assign(hint.style, {
@@ -89,6 +93,7 @@
     fontSize: '11pt',
     userSelect: 'none'
   });
+
   const input = document.createElement('input');
   Object.assign(input, {
     type: 'text',
@@ -96,6 +101,7 @@
     spellcheck: false,
     autocomplete: 'off'
   });
+
   const applyInputStyle = (el) => {
     Object.assign(el.style, {
       outline: 'none',
@@ -214,6 +220,10 @@
 
   let authResolve = null;
 
+  function isAuthVisible() {
+    return authModal && authModal.style.display !== 'none';
+  }
+
   function showAuthModal() {
     return new Promise((resolve) => {
       if (document.body && !document.getElementById('juliaAuthModal')) {
@@ -237,7 +247,6 @@
 
   function authKeyShield(e) {
     if (!isAuthOpen || !isAuthVisible()) return;
-
     e.stopImmediatePropagation();
   }
 
@@ -266,13 +275,16 @@
   function anchorOverlayToCanvas() {
     const canvas = document.querySelector('canvas');
     if (!canvas) return;
+
     let wrap = document.querySelector('.julia-canvas-wrap');
+
     const updateSize = () => {
       const cs = getComputedStyle(canvas);
       if (!wrap) return;
       wrap.style.width = cs.width;
       wrap.style.height = cs.height;
     };
+
     if (!wrap) {
       wrap = document.createElement('div');
       wrap.className = 'julia-canvas-wrap';
@@ -292,7 +304,9 @@
     } else {
       updateSize();
     }
+
     if (overlay.parentNode !== wrap) wrap.appendChild(overlay);
+
     Object.assign(overlay.style, {
       position: 'absolute',
       top: '10px',
@@ -327,6 +341,8 @@
     if (overlay.parentNode) clearInterval(uiInterval);
   }, 50);
 
+  let isInputOpen = false;
+
   function openChatInput() {
     if (!chatConnected) {
       ensureChatClient();
@@ -352,14 +368,17 @@
 
   document.addEventListener('keydown', (e) => {
     if (isAuthOpen) return;
+
     const target = e.target;
     const ourInput = target === input;
+
     if (e.altKey && (e.code === 'KeyC' || (e.key && e.key.toLowerCase() === 'c'))) {
       e.preventDefault();
       e.stopPropagation();
       toggleChatInput();
       return;
     }
+
     if (ourInput) {
       if (e.key === 'Enter' || e.code === 'Enter') {
         e.preventDefault();
@@ -397,9 +416,8 @@
   }
 
   async function getOrAskPin() {
-    let savedPin = getAuthCookie();
+    const savedPin = getAuthCookie();
     if (savedPin && savedPin.length > 0) return savedPin;
-
     const userPin = await showAuthModal();
     if (userPin && userPin.length > 0) return userPin;
     return null;
@@ -409,16 +427,12 @@
     if (chatWs && (chatWs.readyState === WebSocket.OPEN || chatWs.readyState === WebSocket.CONNECTING)) return;
 
     const pin = await getOrAskPin();
-    if (!pin) {
-      console.log('[JuliaChat] Access denied: No PIN entered');
-      return;
-    }
+    if (!pin) return;
 
     chatWs = new WebSocket(CHAT_SERVER_URL);
     chatWs._tempPin = pin;
 
     chatWs.onopen = () => {
-      console.log('[JuliaChat] Connecting...');
       chatWs.send(JSON.stringify({ type: 'auth', pin: pin }));
     };
 
@@ -428,50 +442,36 @@
 
       if (data.type === 'auth_success') {
         chatConnected = true;
-        console.log('[JuliaChat] Auth success!');
         if (chatWs._tempPin) {
           setAuthCookie(chatWs._tempPin);
           chatWs._tempPin = null;
         }
         trySendJoinPresence();
-      }
-      else if (data.type === 'error') {
-        console.error('[JuliaChat] Error:', data.message);
+      } else if (data.type === 'error') {
         if (data.message === 'Invalid PIN') {
           document.cookie = "chat_pin=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
-          chatWs.close();
+          try { chatWs.close(); } catch { }
           alert("Invalid PIN. Please try again.");
         }
-      }
-      else if (data.type === 'chat') {
+      } else if (data.type === 'chat') {
         const senderId = data.id != null ? (data.id >>> 0) : 0;
         chatParticipants.add(senderId);
 
-        const info = playerInfo[senderId] || {};
         const isSelf = ownId != null && senderId === ownId;
-        const who = isSelf ? 'You' : (info.name || data.name || ('ID' + senderId));
-        const hue = isSelf ? 310 : (info.hue != null ? info.hue : data.hue);
+        const who = isSelf ? 'You' : (data.name || ('ID' + senderId));
+        const hue = isSelf ? (selfHue ?? 310) : (data.hue != null ? data.hue : 0);
 
         if (data.text) pushOverlayLine(who, data.text, hue, 'chat');
-      }
-      else if (data.type === 'presence') {
+      } else if (data.type === 'presence') {
         const senderId = data.id != null ? (data.id >>> 0) : 0;
-        const info = playerInfo[senderId] || {};
         const isSelf = ownId != null && senderId === ownId;
 
         if (data.state === 'join') {
           chatParticipants.add(senderId);
-          if (!isSelf) {
-            const whoJ = info.name || data.name || ('ID' + senderId);
-            const hueJ = info.hue != null ? info.hue : data.hue;
-            pushOverlayLine(whoJ, 'joined chat', hueJ, 'presence');
-          }
+          if (!isSelf) pushOverlayLine(data.name || ('ID' + senderId), 'joined chat', data.hue, 'presence');
         } else if (data.state === 'leave') {
           chatParticipants.delete(senderId);
-          if (!isSelf) {
-            const whoL = info.name || data.name || ('ID' + senderId);
-            pushOverlayLine(whoL, 'left chat', null, 'presence');
-          }
+          if (!isSelf) pushOverlayLine(data.name || ('ID' + senderId), 'left chat', null, 'presence');
         }
       }
     };
@@ -479,9 +479,12 @@
     chatWs.onclose = () => {
       chatConnected = false;
       hasJoinedChat = false;
+      chatParticipants.clear();
+
+      const hadCookie = getAuthCookie().length > 0;
       chatWs = null;
 
-      if (getAuthCookie().length > 0) {
+      if (hadCookie && shouldReconnect) {
         if (!chatReconnectTimer) {
           chatReconnectTimer = setTimeout(() => {
             chatReconnectTimer = null;
@@ -497,14 +500,14 @@
     if (!currentGameKey || ownId == null) return;
     if (hasJoinedChat) return;
 
-    const info = playerInfo[ownId] || {};
     chatWs.send(JSON.stringify({
       type: 'join',
       game: currentGameKey,
       id: ownId,
-      name: info.name || 'Unknown',
-      hue: info.hue || 0
+      name: selfName || 'Unknown',
+      hue: (selfHue ?? 0)
     }));
+
     hasJoinedChat = true;
     chatParticipants.add(ownId);
   }
@@ -515,10 +518,7 @@
       ensureChatClient();
       return;
     }
-    chatWs.send(JSON.stringify({
-      type: 'chat',
-      text: String(text)
-    }));
+    chatWs.send(JSON.stringify({ type: 'chat', text: String(text) }));
   }
 
   function trySendFromInput() {
@@ -544,69 +544,136 @@
 
   sendBtn.addEventListener('click', trySendFromInput);
 
-  const OrigWS = window.WebSocket;
-  window.WebSocket = function (...args) {
-    const url = args[0];
-    const ws = new OrigWS(...args);
+  function parseStarblastHash() {
+    const raw = (location.hash || '');
+    const h = raw.charAt(0) === '#' ? raw.slice(1) : raw;
+    if (!h) return { room: null, endpoint: null };
+    const at = h.indexOf('@');
+    if (at === -1) return { room: h || null, endpoint: null };
+    const room = h.slice(0, at) || null;
+    const endpoint = h.slice(at + 1) || null;
+    return { room, endpoint };
+  }
 
-    if (typeof url === 'string' && url.includes('onrender.com')) {
-      return ws;
+  function findSettingsNode() {
+    const root = window.module && window.module.exports && window.module.exports.settings;
+    if (!root || typeof root !== 'object') return null;
+
+    const candidates = Object.values(root);
+
+    for (const node of candidates) {
+      if (!node || typeof node !== 'object') continue;
+
+      const gameName = node?.mode?.game_info?.name;
+      const pName = node?.player_name;
+      const hue = node?.hue;
+
+      if (!gameName) continue;
+      if (pName == null || hue == null) continue;
+
+      const innerObjs = Object.values(node);
+      let foundStatus = null;
+
+      for (const inner of innerObjs) {
+        if (!inner || typeof inner !== 'object') continue;
+        const st = inner.status;
+        if (!st || typeof st !== 'object') continue;
+        if (st.id == null) continue;
+        foundStatus = st;
+        break;
+      }
+
+      if (foundStatus) return node;
     }
 
-    initGameSocketHook(ws);
-    wsRef = ws;
-    return ws;
-  };
-  window.WebSocket.prototype = OrigWS.prototype;
-  Object.setPrototypeOf(window.WebSocket, OrigWS);
-
-  function initGameSocketHook(ws) {
-    ws.addEventListener('message', (ev) => {
-      if (typeof ev.data !== 'string') return;
-      let msg;
-      try { msg = JSON.parse(ev.data); } catch { return; }
-
-      if (msg && msg.name === 'welcome' && msg.data) {
-        ensureChatClient();
-
-        const d = msg.data;
-        const gName = String(d.name ?? 'unknown');
-        const gId = d.systemid != null ? String(d.systemid) : '0';
-        currentGameKey = gName + ':' + gId;
-
-        hasJoinedChat = false;
-        setTimeout(trySendJoinPresence, 1000);
-        setTimeout(anchorOverlayToCanvas, 500);
-      }
-
-      if (msg?.name === 'entered' && msg.data?.shipid != null) {
-        ownId = msg.data.shipid >>> 0;
-        trySendJoinPresence();
-      }
-
-      if (msg?.name === 'player_name' && msg.data) {
-        const d = msg.data;
-        playerInfo[d.id] = { name: d.player_name, hue: d.hue, custom: d.custom || {} };
-      }
-
-      if (msg?.name === 'shipgone' && msg.data != null) {
-        const goneId = msg.data >>> 0;
-        if (!chatParticipants.has(goneId)) return;
-        const info = playerInfo[goneId] || {};
-        const isSelf = ownId != null && goneId === ownId;
-
-        if (isSelf) {
-          chatParticipants.delete(goneId);
-          closeChatInput();
-          hasJoinedChat = false;
-          return;
-        }
-
-        const who = info.name || ('ID' + goneId);
-        const hue = info.hue != null ? info.hue : null;
-        pushOverlayLine(who, 'left game', hue, 'presence');
-        chatParticipants.delete(goneId);
-      }
-    });
+    return null;
   }
+
+  function readSnapshot() {
+    const node = findSettingsNode();
+    if (!node) return null;
+
+    const raw = (location.hash || '');
+    const h = raw.charAt(0) === '#' ? raw.slice(1) : raw;
+    if (!h) return null;
+
+    const at = h.indexOf('@');
+    const room = at === -1 ? h : h.slice(0, at);
+    const endpoint = at === -1 ? null : h.slice(at + 1);
+
+    if (!room) return null;
+
+    const gameName = node?.mode?.game_info?.name;
+    if (!gameName) return null;
+
+    let st = null;
+    for (const inner of Object.values(node)) {
+      if (!inner || typeof inner !== 'object') continue;
+      if (inner.status && typeof inner.status === 'object' && inner.status.id != null) {
+        st = inner.status;
+        break;
+      }
+    }
+    if (!st) return null;
+
+    const id = (st.id >>> 0);
+    const alive = (typeof st.alive === 'boolean') ? st.alive : null;
+    const left = (typeof st.left === 'boolean') ? st.left : null;
+
+    const pName = node.player_name != null ? String(node.player_name) : null;
+    const hue = node.hue != null ? Number(node.hue) : null;
+
+    const gameKey = endpoint ? `${gameName}:${room}@${endpoint}` : `${gameName}:${room}`;
+    const inGame = (alive === null ? true : alive === true) && (left === null ? true : left !== true);
+
+    return { inGame, gameKey, id, pName, hue };
+  }
+
+  function handleLeaveGame() {
+    shouldReconnect = false;
+    currentGameKey = null;
+    ownId = null;
+    hasJoinedChat = false;
+    chatParticipants.clear();
+    closeChatInput();
+    if (chatWs && (chatWs.readyState === WebSocket.OPEN || chatWs.readyState === WebSocket.CONNECTING)) {
+      try { chatWs.close(1000, 'left game'); } catch { }
+    }
+  }
+
+  function handleEnterOrUpdate(snapshot) {
+    shouldReconnect = true;
+
+    const newGameKey = snapshot.gameKey;
+    const newId = snapshot.id;
+
+    const changed = (currentGameKey !== newGameKey) || (ownId !== newId);
+    currentGameKey = newGameKey;
+    ownId = newId;
+    selfName = snapshot.pName || 'Unknown';
+    selfHue = (snapshot.hue ?? 0);
+
+    if (changed) {
+      hasJoinedChat = false;
+      chatParticipants.clear();
+    }
+
+    ensureChatClient();
+    trySendJoinPresence();
+    mountUI();
+    anchorOverlayToCanvas();
+  }
+
+  let lastInGame = false;
+
+  setInterval(() => {
+    const snap = readSnapshot();
+    if (!snap || !snap.inGame) {
+      if (lastInGame) handleLeaveGame();
+      lastInGame = false;
+      return;
+    }
+    lastInGame = true;
+    handleEnterOrUpdate(snap);
+  }, 700);
 })();
