@@ -14,6 +14,7 @@
   let hasJoinedChat = false;
   let isAuthOpen = false;
   let shouldReconnect = true;
+  let joinedTag = null;
 
   const now = () => Date.now();
   const chatParticipants = new Set();
@@ -401,18 +402,18 @@
   function setAuthCookie(pin) {
     const d = new Date();
     d.setTime(d.getTime() + (30 * 24 * 60 * 60 * 1000));
-    document.cookie = "chat_pin=" + encodeURIComponent(pin) + ";expires=" + d.toUTCString() + ";path=/";
+    document.cookie = 'chat_pin=' + encodeURIComponent(pin) + ';expires=' + d.toUTCString() + ';path=/';
   }
 
   function getAuthCookie() {
-    const name = "chat_pin=";
+    const name = 'chat_pin=';
     const ca = document.cookie.split(';');
     for (let i = 0; i < ca.length; i++) {
       let c = ca[i];
       while (c.charAt(0) === ' ') c = c.substring(1);
       if (c.indexOf(name) === 0) return decodeURIComponent(c.substring(name.length, c.length));
     }
-    return "";
+    return '';
   }
 
   async function getOrAskPin() {
@@ -449,9 +450,9 @@
         trySendJoinPresence();
       } else if (data.type === 'error') {
         if (data.message === 'Invalid PIN') {
-          document.cookie = "chat_pin=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+          document.cookie = 'chat_pin=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
           try { chatWs.close(); } catch { }
-          alert("Invalid PIN. Please try again.");
+          alert('Invalid PIN. Please try again.');
         }
       } else if (data.type === 'chat') {
         const senderId = data.id != null ? (data.id >>> 0) : 0;
@@ -479,6 +480,7 @@
     chatWs.onclose = () => {
       chatConnected = false;
       hasJoinedChat = false;
+      joinedTag = null;
       chatParticipants.clear();
 
       const hadCookie = getAuthCookie().length > 0;
@@ -498,7 +500,9 @@
   function trySendJoinPresence() {
     if (!chatWs || !chatConnected) return;
     if (!currentGameKey || ownId == null) return;
-    if (hasJoinedChat) return;
+
+    const tag = currentGameKey + '|' + ownId;
+    if (hasJoinedChat && joinedTag === tag) return;
 
     chatWs.send(JSON.stringify({
       type: 'join',
@@ -509,6 +513,7 @@
     }));
 
     hasJoinedChat = true;
+    joinedTag = tag;
     chatParticipants.add(ownId);
   }
 
@@ -589,19 +594,28 @@
     return null;
   }
 
+  function findConnectionNode() {
+    const root = window.module && window.module.exports && window.module.exports.settings;
+    if (!root || typeof root !== 'object') return null;
+
+    for (const top of Object.values(root)) {
+      if (!top || typeof top !== 'object') continue;
+      for (const inner of Object.values(top)) {
+        if (!inner || typeof inner !== 'object') continue;
+        const ok = inner.accepted === true && typeof inner.address === 'string' && inner.socket && typeof inner.socket.readyState === 'number';
+        if (ok) return inner;
+      }
+    }
+
+    return null;
+  }
+
   function readSnapshot() {
     const node = findSettingsNode();
     if (!node) return null;
 
-    const raw = (location.hash || '');
-    const h = raw.charAt(0) === '#' ? raw.slice(1) : raw;
-    if (!h) return null;
-
-    const at = h.indexOf('@');
-    const room = at === -1 ? h : h.slice(0, at);
-    const endpoint = at === -1 ? null : h.slice(at + 1);
-
-    if (!room) return null;
+    const parsed = parseStarblastHash();
+    if (!parsed.room) return null;
 
     const gameName = node?.mode?.game_info?.name;
     if (!gameName) return null;
@@ -617,14 +631,14 @@
     if (!st) return null;
 
     const id = (st.id >>> 0);
-    const alive = (typeof st.alive === 'boolean') ? st.alive : null;
-    const left = (typeof st.left === 'boolean') ? st.left : null;
-
     const pName = node.player_name != null ? String(node.player_name) : null;
     const hue = node.hue != null ? Number(node.hue) : null;
 
-    const gameKey = endpoint ? `${gameName}:${room}@${endpoint}` : `${gameName}:${room}`;
-    const inGame = (alive === null ? true : alive === true) && (left === null ? true : left !== true);
+    const endpoint = parsed.endpoint ? String(parsed.endpoint) : null;
+    const gameKey = endpoint ? `${gameName}:${parsed.room}@${endpoint}` : `${gameName}:${parsed.room}`;
+
+    const conn = findConnectionNode();
+    const inGame = !!conn && conn.accepted === true && (conn.socket.readyState === 0 || conn.socket.readyState === 1);
 
     return { inGame, gameKey, id, pName, hue };
   }
@@ -633,6 +647,7 @@
     currentGameKey = null;
     ownId = null;
     hasJoinedChat = false;
+    joinedTag = null;
     chatParticipants.clear();
     closeChatInput();
   }
@@ -651,6 +666,7 @@
 
     if (changed) {
       hasJoinedChat = false;
+      joinedTag = null;
       chatParticipants.clear();
     }
 
@@ -661,15 +677,22 @@
   }
 
   let lastInGame = false;
+  let lastSeenInGameAt = 0;
 
   setInterval(() => {
     const snap = readSnapshot();
-    if (!snap || !snap.inGame) {
-      if (lastInGame) handleLeaveGame();
-      lastInGame = false;
+    if (snap && snap.inGame) {
+      lastSeenInGameAt = now();
+      lastInGame = true;
+      handleEnterOrUpdate(snap);
       return;
     }
-    lastInGame = true;
-    handleEnterOrUpdate(snap);
+
+    const grace = 2000;
+    const shouldLeave = lastInGame && (now() - lastSeenInGameAt >= grace);
+    if (shouldLeave) {
+      handleLeaveGame();
+      lastInGame = false;
+    }
   }, 700);
 })();
