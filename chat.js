@@ -73,7 +73,7 @@
     bottom: '16px',
     left: '50%',
     transform: 'translateX(-50%)',
-    zIndex: '2147483647',
+    zIndex: '2.147483647e+09',
     display: 'none',
     gap: '8px',
     alignItems: 'center',
@@ -155,7 +155,7 @@
   Object.assign(authModal.style, {
     position: 'fixed',
     top: '0', left: '0', width: '100%', height: '100%',
-    zIndex: '2147483648',
+    zIndex: '2.147483648e+09',
     background: 'rgba(0,0,0,0.6)',
     backdropFilter: 'blur(2px)',
     display: 'none',
@@ -630,15 +630,11 @@
   }
 
   function handleLeaveGame() {
-    shouldReconnect = false;
     currentGameKey = null;
     ownId = null;
     hasJoinedChat = false;
     chatParticipants.clear();
     closeChatInput();
-    if (chatWs && (chatWs.readyState === WebSocket.OPEN || chatWs.readyState === WebSocket.CONNECTING)) {
-      try { chatWs.close(1000, 'left game'); } catch { }
-    }
   }
 
   function handleEnterOrUpdate(snapshot) {
