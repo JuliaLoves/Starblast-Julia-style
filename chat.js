@@ -549,17 +549,6 @@
 
   sendBtn.addEventListener('click', trySendFromInput);
 
-  function parseStarblastHash() {
-    const raw = (location.hash || '');
-    const h = raw.charAt(0) === '#' ? raw.slice(1) : raw;
-    if (!h) return { room: null, endpoint: null };
-    const at = h.indexOf('@');
-    if (at === -1) return { room: h || null, endpoint: null };
-    const room = h.slice(0, at) || null;
-    const endpoint = h.slice(at + 1) || null;
-    return { room, endpoint };
-  }
-
   function findSettingsNode() {
     const root = window.module && window.module.exports && window.module.exports.settings;
     if (!root || typeof root !== 'object') return null;
@@ -600,13 +589,20 @@
 
     for (const top of Object.values(root)) {
       if (!top || typeof top !== 'object') continue;
+
       for (const inner of Object.values(top)) {
         if (!inner || typeof inner !== 'object') continue;
-        const ok = inner.accepted === true && typeof inner.address === 'string' && inner.socket && typeof inner.socket.readyState === 'number';
+
+        const sock = inner.socket;
+        const ok =
+          inner.accepted === true &&
+          typeof inner.address === 'string' &&
+          sock && typeof sock.readyState === 'number' &&
+          (sock.readyState === 0 || sock.readyState === 1);
+
         if (ok) return inner;
       }
     }
-
     return null;
   }
 
@@ -614,11 +610,12 @@
     const node = findSettingsNode();
     if (!node) return null;
 
-    const parsed = parseStarblastHash();
-    if (!parsed.room) return null;
+    const gi = node?.mode?.game_info;
+    const gameName = gi?.name;
+    const seed = gi?.seed;
 
-    const gameName = node?.mode?.game_info?.name;
     if (!gameName) return null;
+    if (seed == null) return null;
 
     let st = null;
     for (const inner of Object.values(node)) {
@@ -634,11 +631,13 @@
     const pName = node.player_name != null ? String(node.player_name) : null;
     const hue = node.hue != null ? Number(node.hue) : null;
 
-    const endpoint = parsed.endpoint ? String(parsed.endpoint) : null;
-    const gameKey = endpoint ? `${gameName}:${parsed.room}@${endpoint}` : `${gameName}:${parsed.room}`;
-
     const conn = findConnectionNode();
-    const inGame = !!conn && conn.accepted === true && (conn.socket.readyState === 0 || conn.socket.readyState === 1);
+    const inGame = !!conn && conn.accepted === true && conn.socket && (conn.socket.readyState === 0 || conn.socket.readyState === 1);
+
+    const endpoint = (conn && typeof conn.address === 'string') ? conn.address : null;
+    if (!endpoint) return null;
+
+    const gameKey = `${gameName}#${seed}@${endpoint}`;
 
     return { inGame, gameKey, id, pName, hue };
   }
