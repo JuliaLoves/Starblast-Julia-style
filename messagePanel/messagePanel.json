@@ -3,8 +3,8 @@
     "messages": {
         "set1": ["JIJIJ", "IJIJI"],
         "set2": ["XQQQQ", "QXQQQ", "QQXQQ", "QQQXQ", "QQQQX", "QQQXQ", "QQXQQ", "QXQQQ"],
-        "set2": ["SQQQQ", "QSQQQ", "QQSQQ", "QQQSQ", "QQQQS", "QQQSQ", "QQSQQ", "QSQQQ"],
-        "set3": ["JEJEJ", "EJEJE"],
-        "set4": ["Qwwww", "wQwww", "wwQww", "wwwQw", "wwwwQ", "wwwQw", "wwQww", "wQwww"]
+        "set3": ["SQQQQ", "QSQQQ", "QQSQQ", "QQQSQ", "QQQQS", "QQQSQ", "QQSQQ", "QSQQQ"],
+        "set4": ["JEJEJ", "EJEJE"],
+        "set5": ["Qwwww", "wQwww", "wwQww", "wwwQw", "wwwwQ", "wwwQw", "wwQww", "wQwww"]
     }
 }
