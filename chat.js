@@ -1,8 +1,23 @@
 (function () {
   'use strict';
 
-  const CHAT_SERVER_URL = 'wss://chat-server-df5x.onrender.com';
+  // ==================== КОНФИГУРАЦИЯ ====================
+  const CONFIG = {
+    SERVER_URL: 'wss://chat-server-df5x.onrender.com',
+    MAX_LINES: 10,
+    MESSAGE_LIFETIME_MS: 10000,
+    FADE_OUT_MS: 400,
+    RECONNECT_DELAY_MS: 5000,
+    SNAPSHOT_CHECK_INTERVAL_MS: 700,
+    LEAVE_GRACE_MS: 2000,
+    MAX_RECONNECT_ATTEMPTS: 10,
+    PING_INTERVAL_MS: 30000,
+    COOKIE_NAME: 'chat_pin',
+    COOKIE_EXPIRY_DAYS: 30,
+    Z_INDEX_BASE: 2147483647,
+  };
 
+  // ==================== СОСТОЯНИЕ ====================
   let ownId = null;
   let selfName = 'Unknown';
   let selfHue = 0;
@@ -11,20 +26,27 @@
   let chatConnected = false;
   let currentGameKey = null;
   let chatReconnectTimer = null;
+  let pingTimer = null;
   let hasJoinedChat = false;
   let isAuthOpen = false;
   let shouldReconnect = true;
   let joinedTag = null;
+  let reconnectAttempts = 0;
 
   const now = () => Date.now();
   const chatParticipants = new Set();
 
+  // ==================== ЛОГИРОВАНИЕ ====================
+  const LOG_ENABLED = true;
+  function logInfo(...args) { if (LOG_ENABLED) console.log('[JuliaChat INFO]', ...args); }
+  function logWarn(...args) { if (LOG_ENABLED) console.warn('[JuliaChat WARN]', ...args); }
+  function logError(...args) { if (LOG_ENABLED) console.error('[JuliaChat ERROR]', ...args); }
+
+  // ==================== UI: OVERLAY ====================
   const overlay = document.createElement('div');
   overlay.id = 'juliaChatOverlay';
   const list = document.createElement('div');
   overlay.appendChild(list);
-  const MAX_LINES = 10;
-  const MESSAGE_LIFETIME = 10000;
   list.style.whiteSpace = 'pre-wrap';
 
   function pushOverlayLine(who, text, hue, kind) {
@@ -57,24 +79,28 @@
     row.appendChild(msgSpan);
     list.appendChild(row);
 
-    while (list.childElementCount > MAX_LINES) list.firstElementChild?.remove();
+    while (list.childElementCount > CONFIG.MAX_LINES) {
+      const first = list.firstElementChild;
+      if (first) first.remove();
+    }
 
     const born = now();
     setTimeout(() => {
-      if (now() - born >= MESSAGE_LIFETIME) {
+      if (now() - born >= CONFIG.MESSAGE_LIFETIME_MS) {
         row.style.opacity = '0';
-        setTimeout(() => row.remove(), 400);
+        setTimeout(() => row.remove(), CONFIG.FADE_OUT_MS);
       }
-    }, MESSAGE_LIFETIME);
+    }, CONFIG.MESSAGE_LIFETIME_MS);
   }
 
+  // ==================== UI: INPUT ====================
   const inputWrap = document.createElement('div');
   Object.assign(inputWrap.style, {
     position: 'fixed',
     bottom: '16px',
     left: '50%',
     transform: 'translateX(-50%)',
-    zIndex: '2.147483647e+09',
+    zIndex: String(CONFIG.Z_INDEX_BASE),
     display: 'none',
     gap: '8px',
     alignItems: 'center',
@@ -152,11 +178,12 @@
   inputWrap.appendChild(input);
   inputWrap.appendChild(sendBtn);
 
+  // ==================== UI: AUTH MODAL ====================
   const authModal = document.createElement('div');
   Object.assign(authModal.style, {
     position: 'fixed',
     top: '0', left: '0', width: '100%', height: '100%',
-    zIndex: '2.147483648e+09',
+    zIndex: String(CONFIG.Z_INDEX_BASE + 1),
     background: 'rgba(0,0,0,0.6)',
     backdropFilter: 'blur(2px)',
     display: 'none',
@@ -273,6 +300,7 @@
     if (e.key === 'Escape') authCancel.click();
   };
 
+  // ==================== UI: CANVAS WRAPPER ====================
   function anchorOverlayToCanvas() {
     const canvas = document.querySelector('canvas');
     if (!canvas) return;
@@ -399,14 +427,15 @@
     }
   }, true);
 
+  // ==================== COOKIE UTILS ====================
   function setAuthCookie(pin) {
     const d = new Date();
-    d.setTime(d.getTime() + (30 * 24 * 60 * 60 * 1000));
-    document.cookie = 'chat_pin=' + encodeURIComponent(pin) + ';expires=' + d.toUTCString() + ';path=/';
+    d.setTime(d.getTime() + (CONFIG.COOKIE_EXPIRY_DAYS * 24 * 60 * 60 * 1000));
+    document.cookie = CONFIG.COOKIE_NAME + '=' + encodeURIComponent(pin) + ';expires=' + d.toUTCString() + ';path=/;SameSite=Lax';
   }
 
   function getAuthCookie() {
-    const name = 'chat_pin=';
+    const name = CONFIG.COOKIE_NAME + '=';
     const ca = document.cookie.split(';');
     for (let i = 0; i < ca.length; i++) {
       let c = ca[i];
@@ -414,6 +443,10 @@
       if (c.indexOf(name) === 0) return decodeURIComponent(c.substring(name.length, c.length));
     }
     return '';
+  }
+
+  function clearAuthCookie() {
+    document.cookie = CONFIG.COOKIE_NAME + '=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
   }
 
   async function getOrAskPin() {
@@ -424,33 +457,63 @@
     return null;
   }
 
+  // ==================== WEBSOCKET ====================
+  function startPingTimer() {
+    stopPingTimer();
+    pingTimer = setInterval(() => {
+      if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+        try {
+          chatWs.send(JSON.stringify({ type: 'ping' }));
+        } catch (e) {
+          logWarn('Ping send failed:', e);
+        }
+      }
+    }, CONFIG.PING_INTERVAL_MS);
+  }
+
+  function stopPingTimer() {
+    if (pingTimer) {
+      clearInterval(pingTimer);
+      pingTimer = null;
+    }
+  }
+
   async function ensureChatClient() {
     if (chatWs && (chatWs.readyState === WebSocket.OPEN || chatWs.readyState === WebSocket.CONNECTING)) return;
 
     const pin = await getOrAskPin();
     if (!pin) return;
 
-    chatWs = new WebSocket(CHAT_SERVER_URL);
+    logInfo('Connecting to chat server...');
+    chatWs = new WebSocket(CONFIG.SERVER_URL);
     chatWs._tempPin = pin;
 
     chatWs.onopen = () => {
+      logInfo('WebSocket connected, sending auth...');
       chatWs.send(JSON.stringify({ type: 'auth', pin: pin }));
     };
 
     chatWs.onmessage = (event) => {
       let data;
-      try { data = JSON.parse(event.data); } catch (e) { return; }
+      try { data = JSON.parse(event.data); } catch (e) { 
+        logWarn('Failed to parse message:', e);
+        return; 
+      }
 
       if (data.type === 'auth_success') {
+        logInfo('Auth successful');
         chatConnected = true;
+        reconnectAttempts = 0;
         if (chatWs._tempPin) {
           setAuthCookie(chatWs._tempPin);
           chatWs._tempPin = null;
         }
+        startPingTimer();
         trySendJoinPresence();
       } else if (data.type === 'error') {
         if (data.message === 'Invalid PIN') {
-          document.cookie = 'chat_pin=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+          logWarn('Invalid PIN received');
+          clearAuthCookie();
           try { chatWs.close(); } catch { }
           alert('Invalid PIN. Please try again.');
         }
@@ -477,21 +540,37 @@
       }
     };
 
+    chatWs.onerror = (err) => {
+      logError('WebSocket error:', err);
+    };
+
     chatWs.onclose = () => {
+      logInfo('WebSocket closed');
       chatConnected = false;
       hasJoinedChat = false;
       joinedTag = null;
       chatParticipants.clear();
+      stopPingTimer();
 
       const hadCookie = getAuthCookie().length > 0;
+      const ws = chatWs;
       chatWs = null;
 
       if (hadCookie && shouldReconnect) {
+        reconnectAttempts++;
+        if (reconnectAttempts >= CONFIG.MAX_RECONNECT_ATTEMPTS) {
+          logWarn('Max reconnect attempts reached, stopping');
+          reconnectAttempts = 0;
+          return;
+        }
+
         if (!chatReconnectTimer) {
+          const delay = Math.min(CONFIG.RECONNECT_DELAY_MS * Math.pow(1.5, reconnectAttempts), 30000);
+          logInfo(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts})...`);
           chatReconnectTimer = setTimeout(() => {
             chatReconnectTimer = null;
             ensureChatClient();
-          }, 5000);
+          }, delay);
         }
       }
     };
@@ -504,6 +583,7 @@
     const tag = currentGameKey + '|' + ownId;
     if (hasJoinedChat && joinedTag === tag) return;
 
+    logInfo(`Joining room: ${currentGameKey} as ${selfName} (#${ownId})`);
     chatWs.send(JSON.stringify({
       type: 'join',
       game: currentGameKey,
@@ -549,6 +629,7 @@
 
   sendBtn.addEventListener('click', trySendFromInput);
 
+  // ==================== GAME INTEGRATION ====================
   function findSettingsNode() {
     const root = window.module && window.module.exports && window.module.exports.settings;
     if (!root || typeof root !== 'object') return null;
@@ -643,6 +724,7 @@
   }
 
   function handleLeaveGame() {
+    logInfo('Leaving game, cleaning up chat');
     currentGameKey = null;
     ownId = null;
     hasJoinedChat = false;
@@ -687,11 +769,41 @@
       return;
     }
 
-    const grace = 2000;
+    const grace = CONFIG.LEAVE_GRACE_MS;
     const shouldLeave = lastInGame && (now() - lastSeenInGameAt >= grace);
     if (shouldLeave) {
       handleLeaveGame();
       lastInGame = false;
     }
-  }, 700);
+  }, CONFIG.SNAPSHOT_CHECK_INTERVAL_MS);
+
+  // ==================== PUBLIC API ====================
+  window.JuliaChat = {
+    send: sendChatText,
+    open: openChatInput,
+    close: closeChatInput,
+    toggle: toggleChatInput,
+    isConnected: () => chatConnected,
+    getParticipants: () => Array.from(chatParticipants),
+    getConfig: () => ({ ...CONFIG }),
+    reconnect: () => {
+      shouldReconnect = true;
+      reconnectAttempts = 0;
+      ensureChatClient();
+    },
+    disconnect: () => {
+      shouldReconnect = false;
+      if (chatWs) {
+        try { chatWs.close(); } catch {}
+        chatWs = null;
+      }
+      stopPingTimer();
+      if (chatReconnectTimer) {
+        clearTimeout(chatReconnectTimer);
+        chatReconnectTimer = null;
+      }
+    }
+  };
+
+  logInfo('JuliaChat module initialized');
 })();
