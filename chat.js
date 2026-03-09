@@ -54,7 +54,7 @@
 
   const connectionIndicator = document.createElement('div');
   connectionIndicator.id = 'juliaConnectionIndicator';
-  connectionIndicator.style.cssText = 'position:fixed;top:5px;left:5px;z-index:2147483647;padding:6px 12px;border-radius:20px;font-size:11px;font-family:Play,system-ui,sans-serif;font-weight:600;display:flex;align-items:center;gap:6px;backdrop-filter:blur(5px);box-shadow:rgba(255,0,0,0.3) 0px 2px 8px;transition:0.3s;';
+  connectionIndicator.style.cssText = 'position:fixed;top:5px;left:5px;z-index:2147483647;padding:6px 12px;border-radius:20px;font-size:11px;font-family:Play,system-ui,sans-serif;font-weight:600;display:flex;align-items:center;gap:6px;backdrop-filter:blur(5px);transition:0.3s;';
 
   const statusDot = document.createElement('span');
   statusDot.style.cssText = 'width:8px;height:8px;border-radius:50%;display:inline-block;background:rgb(102,102,102);';
