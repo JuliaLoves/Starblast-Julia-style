@@ -14,6 +14,12 @@
     COOKIE_NAME: 'chat_pin',
     COOKIE_EXPIRY_DAYS: 30,
     Z_INDEX_BASE: 2147483647,
+    MIN_PIN_LENGTH: 1,
+    MAX_PIN_LENGTH: 50,
+    CONNECT_TIMEOUT_MS: 10000,
+    MESSAGE_RATE_LIMIT_MS: 150,
+    MAX_INPUT_HISTORY: 50,
+    SOUND_ENABLED_DEFAULT: true,
   };
 
   let ownId = null;
@@ -22,14 +28,20 @@
 
   let chatWs = null;
   let chatConnected = false;
+  let chatConnecting = false;
   let currentGameKey = null;
   let chatReconnectTimer = null;
   let pingTimer = null;
+  let connectTimeoutTimer = null;
   let hasJoinedChat = false;
   let isAuthOpen = false;
   let shouldReconnect = true;
   let joinedTag = null;
   let reconnectAttempts = 0;
+  let lastMessageTime = 0;
+  let unreadCount = 0;
+  let isChatVisible = true;
+  let soundEnabled = CONFIG.SOUND_ENABLED_DEFAULT;
 
   const now = () => Date.now();
   const chatParticipants = new Set();
@@ -39,6 +51,131 @@
   const list = document.createElement('div');
   overlay.appendChild(list);
   list.style.whiteSpace = 'pre-wrap';
+
+  const connectionIndicator = document.createElement('div');
+  connectionIndicator.id = 'juliaConnectionIndicator';
+  Object.assign(connectionIndicator.style, {
+    position: 'fixed',
+    top: '10px',
+    right: '10px',
+    zIndex: String(CONFIG.Z_INDEX_BASE + 2),
+    padding: '6px 12px',
+    borderRadius: '20px',
+    fontSize: '11px',
+    fontFamily: 'Play, system-ui, sans-serif',
+    fontWeight: '600',
+    display: 'none',
+    alignItems: 'center',
+    gap: '6px',
+    backdropFilter: 'blur(5px)',
+    boxShadow: '0 2px 8px rgba(0,0,0,.3)',
+    transition: 'all 0.3s ease'
+  });
+
+  const statusDot = document.createElement('span');
+  Object.assign(statusDot.style, {
+    width: '8px',
+    height: '8px',
+    borderRadius: '50%',
+    display: 'inline-block',
+    background: '#666'
+  });
+
+  const statusText = document.createElement('span');
+  statusText.textContent = 'Offline';
+  statusText.style.color = '#ddd';
+
+  connectionIndicator.appendChild(statusDot);
+  connectionIndicator.appendChild(statusText);
+
+  const unreadBadge = document.createElement('div');
+  Object.assign(unreadBadge.style, {
+    position: 'absolute',
+    top: '-8px',
+    right: '-8px',
+    background: 'linear-gradient(135deg, #ff6b6b, #ee5a5a)',
+    color: 'white',
+    borderRadius: '10px',
+    padding: '2px 6px',
+    fontSize: '10px',
+    fontWeight: '700',
+    minWidth: '18px',
+    textAlign: 'center',
+    display: 'none',
+    boxShadow: '0 2px 6px rgba(255,107,107,.4)'
+  });
+
+  const soundToggle = document.createElement('button');
+  soundToggle.textContent = '🔊';
+  soundToggle.title = 'Toggle sound';
+  Object.assign(soundToggle.style, {
+    position: 'fixed',
+    top: '50px',
+    right: '10px',
+    zIndex: String(CONFIG.Z_INDEX_BASE + 2),
+    background: 'rgba(0,0,0,.65)',
+    border: '1px solid rgba(255,255,255,.15)',
+    borderRadius: '8px',
+    padding: '6px 10px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    display: 'none',
+    backdropFilter: 'blur(5px)'
+  });
+
+  let audioContext = null;
+
+  function playNotificationSound() {
+    if (!soundEnabled) return;
+    try {
+      if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      oscillator.frequency.value = 880;
+      oscillator.type = 'sine';
+      gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.15);
+    } catch (e) {
+      console.error('[JuliaChat] Sound error:', e);
+    }
+  }
+
+  soundToggle.onclick = () => {
+    soundEnabled = !soundEnabled;
+    soundToggle.textContent = soundEnabled ? '🔊' : '🔇';
+    try { localStorage.setItem('juliaChatSound', String(soundEnabled)); } catch {}
+  };
+
+  function updateConnectionStatus(status) {
+    const statuses = {
+      online: { color: '#2bd576', bg: 'rgba(43,213,118,.15)', text: 'Online' },
+      connecting: { color: '#ffcc66', bg: 'rgba(255,204,102,.15)', text: 'Connecting...' },
+      offline: { color: '#ff5c7a', bg: 'rgba(255,92,122,.15)', text: 'Offline' },
+      error: { color: '#ff5c7a', bg: 'rgba(255,92,122,.15)', text: 'Error' }
+    };
+    const s = statuses[status] || statuses.offline;
+    statusDot.style.background = s.color;
+    statusText.textContent = s.text;
+    statusText.style.color = s.color;
+    connectionIndicator.style.background = s.bg;
+    connectionIndicator.style.borderColor = s.color;
+  }
+
+  function showConnectionIndicator() {
+    connectionIndicator.style.display = 'flex';
+    soundToggle.style.display = 'block';
+    try {
+      const saved = localStorage.getItem('juliaChatSound');
+      if (saved !== null) soundEnabled = saved === 'true';
+      soundToggle.textContent = soundEnabled ? '🔊' : '🔇';
+    } catch {}
+  }
 
   function pushOverlayLine(who, text, hue, kind) {
     const row = document.createElement('div');
@@ -351,6 +488,15 @@
       authModal.id = 'juliaAuthModal';
       document.body.appendChild(authModal);
     }
+    if (!document.getElementById('juliaConnectionIndicator')) {
+      connectionIndicator.id = 'juliaConnectionIndicator';
+      document.body.appendChild(connectionIndicator);
+      showConnectionIndicator();
+    }
+    if (!document.getElementById('juliaSoundToggle')) {
+      soundToggle.id = 'juliaSoundToggle';
+      document.body.appendChild(soundToggle);
+    }
   }
 
   const uiInterval = setInterval(() => {
@@ -359,6 +505,8 @@
   }, 50);
 
   let isInputOpen = false;
+  const inputHistory = [];
+  let inputHistoryIndex = -1;
 
   function openChatInput() {
     if (!chatConnected) {
@@ -368,6 +516,9 @@
     mountUI();
     inputWrap.style.display = 'flex';
     isInputOpen = true;
+    isChatVisible = true;
+    unreadCount = 0;
+    updateUnreadBadge();
     setTimeout(() => {
       input.focus({ preventScroll: true });
       input.select();
@@ -377,10 +528,51 @@
   function closeChatInput() {
     inputWrap.style.display = 'none';
     isInputOpen = false;
+    inputHistoryIndex = -1;
   }
 
   function toggleChatInput() {
     isInputOpen ? closeChatInput() : openChatInput();
+  }
+
+  function updateUnreadBadge() {
+    if (unreadCount > 0 && !isChatVisible) {
+      unreadBadge.textContent = String(unreadCount > 99 ? '99+' : unreadCount);
+      unreadBadge.style.display = 'block';
+      if (!inputWrap.contains(unreadBadge)) {
+        inputWrap.appendChild(unreadBadge);
+      }
+    } else {
+      unreadBadge.style.display = 'none';
+    }
+  }
+
+  function addToInputHistory(text) {
+    if (!text) return;
+    if (inputHistory.length > 0 && inputHistory[inputHistory.length - 1] === text) return;
+    inputHistory.push(text);
+    if (inputHistory.length > CONFIG.MAX_INPUT_HISTORY) {
+      inputHistory.shift();
+    }
+    inputHistoryIndex = inputHistory.length;
+  }
+
+  function navigateInputHistory(direction) {
+    if (inputHistory.length === 0) return;
+    if (direction === 'up') {
+      if (inputHistoryIndex > 0) {
+        inputHistoryIndex--;
+        input.value = inputHistory[inputHistoryIndex];
+      }
+    } else {
+      if (inputHistoryIndex < inputHistory.length - 1) {
+        inputHistoryIndex++;
+        input.value = inputHistory[inputHistoryIndex];
+      } else {
+        inputHistoryIndex = inputHistory.length;
+        input.value = '';
+      }
+    }
   }
 
   document.addEventListener('keydown', (e) => {
@@ -407,6 +599,16 @@
         e.preventDefault();
         e.stopPropagation();
         closeChatInput();
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        navigateInputHistory('up');
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        navigateInputHistory('down');
         return;
       }
       e.stopPropagation();
@@ -438,15 +640,16 @@
 
   async function getOrAskPin() {
     const savedPin = getAuthCookie();
-    if (savedPin && savedPin.length > 0) return savedPin;
+    if (savedPin && savedPin.length >= CONFIG.MIN_PIN_LENGTH) return savedPin;
     const userPin = await showAuthModal();
-    if (userPin && userPin.length > 0) return userPin;
+    if (userPin && userPin.length >= CONFIG.MIN_PIN_LENGTH && userPin.length <= CONFIG.MAX_PIN_LENGTH) return userPin;
     return null;
   }
 
   function startPingTimer() {
     stopPingTimer();
     pingTimer = setInterval(() => {
+      if (document.hidden) return;
       if (chatWs && chatWs.readyState === WebSocket.OPEN) {
         try {
           chatWs.send(JSON.stringify({ type: 'ping' }));
@@ -464,24 +667,58 @@
     }
   }
 
+  function stopConnectTimeout() {
+    if (connectTimeoutTimer) {
+      clearTimeout(connectTimeoutTimer);
+      connectTimeoutTimer = null;
+    }
+  }
+
+  function startConnectTimeout() {
+    stopConnectTimeout();
+    connectTimeoutTimer = setTimeout(() => {
+      console.error('[JuliaChat] Connection timeout');
+      chatConnecting = false;
+      updateConnectionStatus('error');
+      if (chatWs) {
+        try { chatWs.close(); } catch {}
+      }
+      handleDisconnect();
+    }, CONFIG.CONNECT_TIMEOUT_MS);
+  }
+
   async function ensureChatClient() {
     if (chatWs && (chatWs.readyState === WebSocket.OPEN || chatWs.readyState === WebSocket.CONNECTING)) return;
+    if (chatConnecting) return;
 
     const pin = await getOrAskPin();
     if (!pin) return;
 
+    if (pin.length < CONFIG.MIN_PIN_LENGTH || pin.length > CONFIG.MAX_PIN_LENGTH) {
+      console.error('[JuliaChat] Invalid PIN length');
+      alert('Invalid PIN length. Please try again.');
+      return;
+    }
+
+    chatConnecting = true;
+    updateConnectionStatus('connecting');
+
     chatWs = new WebSocket(CONFIG.SERVER_URL);
     chatWs._tempPin = pin;
 
+    startConnectTimeout();
+
     chatWs.onopen = () => {
+      stopConnectTimeout();
+      chatConnecting = false;
       chatWs.send(JSON.stringify({ type: 'auth', pin: pin }));
     };
 
     chatWs.onmessage = (event) => {
       let data;
-      try { data = JSON.parse(event.data); } catch (e) { 
+      try { data = JSON.parse(event.data); } catch (e) {
         console.error('[JuliaChat] Parse error:', e);
-        return; 
+        return;
       }
 
       if (data.type === 'auth_success') {
@@ -491,6 +728,7 @@
           setAuthCookie(chatWs._tempPin);
           chatWs._tempPin = null;
         }
+        updateConnectionStatus('online');
         startPingTimer();
         trySendJoinPresence();
       } else if (data.type === 'error') {
@@ -507,7 +745,16 @@
         const who = isSelf ? 'You' : (data.name || ('ID' + senderId));
         const hue = isSelf ? (selfHue ?? 310) : (data.hue != null ? data.hue : 0);
 
-        if (data.text) pushOverlayLine(who, data.text, hue, 'chat');
+        if (data.text) {
+          pushOverlayLine(who, data.text, hue, 'chat');
+          if (!isSelf) {
+            if (!isChatVisible) {
+              unreadCount++;
+              updateUnreadBadge();
+              playNotificationSound();
+            }
+          }
+        }
       } else if (data.type === 'presence') {
         const senderId = data.id != null ? (data.id >>> 0) : 0;
         const isSelf = ownId != null && senderId === ownId;
@@ -524,34 +771,45 @@
 
     chatWs.onerror = (err) => {
       console.error('[JuliaChat] WebSocket error:', err);
+      updateConnectionStatus('error');
     };
 
     chatWs.onclose = () => {
-      chatConnected = false;
-      hasJoinedChat = false;
-      joinedTag = null;
-      chatParticipants.clear();
-      stopPingTimer();
-
-      const hadCookie = getAuthCookie().length > 0;
-      chatWs = null;
-
-      if (hadCookie && shouldReconnect) {
-        reconnectAttempts++;
-        if (reconnectAttempts >= CONFIG.MAX_RECONNECT_ATTEMPTS) {
-          reconnectAttempts = 0;
-          return;
-        }
-
-        if (!chatReconnectTimer) {
-          const delay = Math.min(CONFIG.RECONNECT_DELAY_MS * Math.pow(1.5, reconnectAttempts), 30000);
-          chatReconnectTimer = setTimeout(() => {
-            chatReconnectTimer = null;
-            ensureChatClient();
-          }, delay);
-        }
-      }
+      handleDisconnect();
     };
+  }
+
+  function handleDisconnect() {
+    chatConnected = false;
+    chatConnecting = false;
+    hasJoinedChat = false;
+    joinedTag = null;
+    chatParticipants.clear();
+    stopPingTimer();
+    stopConnectTimeout();
+
+    const hadCookie = getAuthCookie().length > 0;
+    chatWs = null;
+
+    updateConnectionStatus('offline');
+
+    if (hadCookie && shouldReconnect) {
+      reconnectAttempts++;
+      if (reconnectAttempts >= CONFIG.MAX_RECONNECT_ATTEMPTS) {
+        reconnectAttempts = 0;
+        console.error('[JuliaChat] Max reconnect attempts reached');
+        alert('Connection lost. Please refresh the page or try again.');
+        return;
+      }
+
+      if (!chatReconnectTimer) {
+        const delay = Math.min(CONFIG.RECONNECT_DELAY_MS * Math.pow(1.5, reconnectAttempts), 30000);
+        chatReconnectTimer = setTimeout(() => {
+          chatReconnectTimer = null;
+          ensureChatClient();
+        }, delay);
+      }
+    }
   }
 
   function trySendJoinPresence() {
@@ -576,11 +834,17 @@
 
   function sendChatText(text) {
     if (!text) return;
+    const currentTime = now();
+    if (currentTime - lastMessageTime < CONFIG.MESSAGE_RATE_LIMIT_MS) {
+      console.warn('[JuliaChat] Rate limit exceeded');
+      return;
+    }
     if (!chatConnected) {
       ensureChatClient();
       return;
     }
     chatWs.send(JSON.stringify({ type: 'chat', text: String(text) }));
+    lastMessageTime = currentTime;
   }
 
   function trySendFromInput() {
@@ -590,8 +854,10 @@
     }
     const text = input.value;
     if (!text) return;
+    addToInputHistory(text);
     sendChatText(text);
     input.value = '';
+    inputHistoryIndex = inputHistory.length;
   }
 
   input.addEventListener('keydown', (e) => {
@@ -752,14 +1018,32 @@
     }
   }, CONFIG.SNAPSHOT_CHECK_INTERVAL_MS);
 
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      isChatVisible = false;
+    } else {
+      isChatVisible = true;
+      unreadCount = 0;
+      updateUnreadBadge();
+    }
+  });
+
   window.JuliaChat = {
     send: sendChatText,
     open: openChatInput,
     close: closeChatInput,
     toggle: toggleChatInput,
     isConnected: () => chatConnected,
+    isConnecting: () => chatConnecting,
     getParticipants: () => Array.from(chatParticipants),
     getConfig: () => ({ ...CONFIG }),
+    getUnreadCount: () => unreadCount,
+    isSoundEnabled: () => soundEnabled,
+    setSoundEnabled: (enabled) => {
+      soundEnabled = enabled;
+      soundToggle.textContent = enabled ? '🔊' : '🔇';
+      try { localStorage.setItem('juliaChatSound', String(enabled)); } catch {}
+    },
     reconnect: () => {
       shouldReconnect = true;
       reconnectAttempts = 0;
@@ -772,10 +1056,12 @@
         chatWs = null;
       }
       stopPingTimer();
+      stopConnectTimeout();
       if (chatReconnectTimer) {
         clearTimeout(chatReconnectTimer);
         chatReconnectTimer = null;
       }
+      updateConnectionStatus('offline');
     }
   };
 })();
