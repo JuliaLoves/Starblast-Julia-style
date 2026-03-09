@@ -57,7 +57,7 @@
   Object.assign(connectionIndicator.style, {
     position: 'fixed',
     top: '10px',
-    right: '10px',
+    left: '10px',
     zIndex: String(CONFIG.Z_INDEX_BASE + 2),
     padding: '6px 12px',
     borderRadius: '20px',
@@ -110,17 +110,18 @@
   soundToggle.title = 'Toggle sound';
   Object.assign(soundToggle.style, {
     position: 'fixed',
-    top: '50px',
-    right: '10px',
+    top: '10px',
+    left: '110px',
     zIndex: String(CONFIG.Z_INDEX_BASE + 2),
     background: 'rgba(0,0,0,.65)',
     border: '1px solid rgba(255,255,255,.15)',
     borderRadius: '8px',
-    padding: '6px 10px',
+    padding: '4px 8px',
     cursor: 'pointer',
     fontSize: '14px',
     display: 'none',
-    backdropFilter: 'blur(5px)'
+    backdropFilter: 'blur(5px)',
+    marginLeft: '6px'
   });
 
   let audioContext = null;
