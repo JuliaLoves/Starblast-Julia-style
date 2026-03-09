@@ -120,17 +120,17 @@
 
   function updateConnectionStatus(status) {
     const statuses = {
-      online: { color: 'rgb(43,213,118)', bg: 'rgba(43,213,118,0.15)', text: 'Online' },
-      connecting: { color: 'rgb(255,204,102)', bg: 'rgba(255,204,102,0.15)', text: 'Connecting...' },
-      offline: { color: 'rgb(255,92,122)', bg: 'rgba(255,92,122,0.15)', text: 'Offline' },
-      error: { color: 'rgb(255,92,122)', bg: 'rgba(255,92,122,0.15)', text: 'Error' }
+      online: { color: 'rgb(43,213,118)', bg: 'rgba(43,213,118,0.15)', text: 'Online', shadow: 'rgba(43,213,118,0.3)' },
+      connecting: { color: 'rgb(255,204,102)', bg: 'rgba(255,204,102,0.15)', text: 'Connecting...', shadow: 'rgba(255,204,102,0.3)' },
+      offline: { color: 'rgb(102,102,102)', bg: 'rgba(102,102,102,0.15)', text: 'Offline', shadow: 'none' },
+      error: { color: 'rgb(255,92,122)', bg: 'rgba(255,92,122,0.15)', text: 'Error', shadow: 'rgba(255,92,122,0.3)' }
     };
     const s = statuses[status] || statuses.offline;
     statusDot.style.background = s.color;
     statusText.textContent = s.text;
     statusText.style.color = s.color;
     connectionIndicator.style.background = s.bg;
-    connectionIndicator.style.boxShadow = `0 2px 8px ${s.color.replace('rgb', 'rgba').replace(')', ',0.3)')}`;
+    connectionIndicator.style.boxShadow = s.shadow === 'none' ? 'none' : `0 2px 8px ${s.shadow}`;
   }
 
   function showConnectionIndicator() {
