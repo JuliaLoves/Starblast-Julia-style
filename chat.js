@@ -54,36 +54,14 @@
 
   const connectionIndicator = document.createElement('div');
   connectionIndicator.id = 'juliaConnectionIndicator';
-  Object.assign(connectionIndicator.style, {
-    position: 'fixed',
-    top: '10px',
-    left: '10px',
-    zIndex: String(CONFIG.Z_INDEX_BASE + 2),
-    padding: '6px 12px',
-    borderRadius: '20px',
-    fontSize: '11px',
-    fontFamily: 'Play, system-ui, sans-serif',
-    fontWeight: '600',
-    display: 'none',
-    alignItems: 'center',
-    gap: '6px',
-    backdropFilter: 'blur(5px)',
-    boxShadow: '0 2px 8px rgba(0,0,0,.3)',
-    transition: 'all 0.3s ease'
-  });
+  connectionIndicator.style.cssText = 'position:fixed;top:5px;left:5px;z-index:2147483647;padding:6px 12px;border-radius:20px;font-size:11px;font-family:Play,system-ui,sans-serif;font-weight:600;display:flex;align-items:center;gap:6px;backdrop-filter:blur(5px);box-shadow:rgba(255,0,0,0.3) 0px 2px 8px;transition:0.3s;';
 
   const statusDot = document.createElement('span');
-  Object.assign(statusDot.style, {
-    width: '8px',
-    height: '8px',
-    borderRadius: '50%',
-    display: 'inline-block',
-    background: '#666'
-  });
+  statusDot.style.cssText = 'width:8px;height:8px;border-radius:50%;display:inline-block;background:rgb(102,102,102);';
 
   const statusText = document.createElement('span');
   statusText.textContent = 'Offline';
-  statusText.style.color = '#ddd';
+  statusText.style.cssText = 'color:rgb(221,221,221);';
 
   connectionIndicator.appendChild(statusDot);
   connectionIndicator.appendChild(statusText);
@@ -108,21 +86,8 @@
   const soundToggle = document.createElement('button');
   soundToggle.textContent = '🔊';
   soundToggle.title = 'Toggle sound';
-  Object.assign(soundToggle.style, {
-    position: 'fixed',
-    top: '10px',
-    left: '110px',
-    zIndex: String(CONFIG.Z_INDEX_BASE + 2),
-    background: 'rgba(0,0,0,.65)',
-    border: '1px solid rgba(255,255,255,.15)',
-    borderRadius: '8px',
-    padding: '4px 8px',
-    cursor: 'pointer',
-    fontSize: '14px',
-    display: 'none',
-    backdropFilter: 'blur(5px)',
-    marginLeft: '6px'
-  });
+  soundToggle.id = 'juliaSoundToggle';
+  soundToggle.style.cssText = 'position:fixed;top:33px;left:25px;z-index:2147483647;background:rgba(0,0,0,0.65);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:6px 8px;cursor:pointer;font-size:9px;display:block;backdrop-filter:blur(5px);';
 
   let audioContext = null;
 
@@ -155,22 +120,20 @@
 
   function updateConnectionStatus(status) {
     const statuses = {
-      online: { color: '#2bd576', bg: 'rgba(43,213,118,.15)', text: 'Online' },
-      connecting: { color: '#ffcc66', bg: 'rgba(255,204,102,.15)', text: 'Connecting...' },
-      offline: { color: '#ff5c7a', bg: 'rgba(255,92,122,.15)', text: 'Offline' },
-      error: { color: '#ff5c7a', bg: 'rgba(255,92,122,.15)', text: 'Error' }
+      online: { color: 'rgb(43,213,118)', bg: 'rgba(43,213,118,0.15)', text: 'Online' },
+      connecting: { color: 'rgb(255,204,102)', bg: 'rgba(255,204,102,0.15)', text: 'Connecting...' },
+      offline: { color: 'rgb(255,92,122)', bg: 'rgba(255,92,122,0.15)', text: 'Offline' },
+      error: { color: 'rgb(255,92,122)', bg: 'rgba(255,92,122,0.15)', text: 'Error' }
     };
     const s = statuses[status] || statuses.offline;
     statusDot.style.background = s.color;
     statusText.textContent = s.text;
     statusText.style.color = s.color;
     connectionIndicator.style.background = s.bg;
-    connectionIndicator.style.borderColor = s.color;
+    connectionIndicator.style.boxShadow = `0 2px 8px ${s.color.replace('rgb', 'rgba').replace(')', ',0.3)')}`;
   }
 
   function showConnectionIndicator() {
-    connectionIndicator.style.display = 'flex';
-    soundToggle.style.display = 'block';
     try {
       const saved = localStorage.getItem('juliaChatSound');
       if (saved !== null) soundEnabled = saved === 'true';
