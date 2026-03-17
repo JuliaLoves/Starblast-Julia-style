@@ -134,7 +134,7 @@
         "key": "gradient",
         "stops": [
             {"pos": 0, "color": "#ffffff"},
-            {"pos": 0.5, "color": "#000000"}
+            {"pos": 0.5, "color": "#7f7f7f"}
             {"pos": 1, "color": "#000000"}
         ]
     }
