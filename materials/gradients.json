@@ -129,13 +129,5 @@
             { "pos": 0.8, "color": "hsl(50,100%,70%)" },
             { "pos": 1, "color": "hsl(330,100%,70%)" }
         ]
-    },
-    {
-        "key": "gradient",
-        "stops": [
-            {"pos": 0, "color": "#ffffff"},
-            {"pos": 0.5, "color": "#7f7f7f"},
-            {"pos": 1, "color": "#000000"}
-        ]
     }
 ]
