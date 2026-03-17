@@ -75,7 +75,7 @@
     {
         "name": "buildGradientMaterial",
         "specular": "16777215",
-        "shininess": 50,
+        "shininess": 0,
         "color": "0",
         "gradientColors": [
             {"pos": 0, "color": "#ffffff"},
