@@ -131,13 +131,9 @@
         ]
     },
     {
-        "name": "gradient",
-        "specular": 10506256,
-        "shininess": 50,
-        "gradient": true,
-        "gradientColors": [
+        "key": "gradient",
+        "stops": [
             {"pos": 0, "color": "#ffffff"},
-            {"pos": 0.5, "color": "#ffd700"},
             {"pos": 1, "color": "#000000"}
         ]
     }
