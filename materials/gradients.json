@@ -129,5 +129,16 @@
             { "pos": 0.8, "color": "hsl(50,100%,70%)" },
             { "pos": 1, "color": "hsl(330,100%,70%)" }
         ]
+    },
+    {
+        "name": "gradient",
+        "specular": 10506256,
+        "shininess": 50,
+        "gradient": true,
+        "gradientColors": [
+            {"pos": 0, "color": "#ffffff"},
+            {"pos": 0.5, "color": "#ffd700"},
+            {"pos": 1, "color": "#000000"}
+        ]
     }
 ]
