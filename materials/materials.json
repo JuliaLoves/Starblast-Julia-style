@@ -72,7 +72,7 @@
         "useHue": true,
         "opacity": 0.3
     },
-        {
+    {
         "name": "buildGradientMaterial",
         "specular": "00000000",
         "shininess": 50,
