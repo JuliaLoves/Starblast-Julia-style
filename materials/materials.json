@@ -72,10 +72,11 @@
         "useHue": true,
         "opacity": 0.3
     },
-    {
+        {
         "name": "buildGradientMaterial",
         "specular": 10506256,
         "shininess": 50,
+        "color": "0x000000",
         "gradientColors": [
             {"pos": 0, "color": "#ffffff"},
             {"pos": 1, "color": "#000000"}
