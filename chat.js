@@ -42,10 +42,13 @@
   let unreadCount = 0;
   let isChatVisible = true;
   let soundEnabled = CONFIG.SOUND_ENABLED_DEFAULT;
+  let pinCode = null;
+  let authFailed = false;
 
   const now = () => Date.now();
   const chatParticipants = new Set();
 
+  // ==================== UI ЭЛЕМЕНТЫ ====================
   const overlay = document.createElement('div');
   overlay.id = 'juliaChatOverlay';
   const list = document.createElement('div');
@@ -54,7 +57,8 @@
 
   const connectionIndicator = document.createElement('div');
   connectionIndicator.id = 'juliaConnectionIndicator';
-  connectionIndicator.style.cssText = 'position:fixed;top:5px;left:5px;z-index:2147483647;padding:6px 12px;border-radius:20px;font-size:11px;font-family:Play,system-ui,sans-serif;font-weight:600;display:flex;align-items:center;gap:6px;backdrop-filter:blur(5px);transition:0.3s;';
+  connectionIndicator.style.cssText = 'position:fixed;top:5px;left:5px;z-index:2147483647;padding:6px 12px;border-radius:20px;font-size:11px;font-family:Play,system-ui,sans-serif;font-weight:600;display:flex;align-items:center;gap:6px;backdrop-filter:blur(5px);transition:0.3s;cursor:pointer;';
+  connectionIndicator.title = 'Click to reconnect';
 
   const statusDot = document.createElement('span');
   statusDot.style.cssText = 'width:8px;height:8px;border-radius:50%;display:inline-block;background:rgb(102,102,102);';
@@ -123,7 +127,8 @@
       online: { color: 'rgb(43,213,118)', bg: 'rgba(43,213,118,0.15)', text: 'Online', shadow: 'rgba(43,213,118,0.3)' },
       connecting: { color: 'rgb(255,204,102)', bg: 'rgba(255,204,102,0.15)', text: 'Connecting...', shadow: 'rgba(255,204,102,0.3)' },
       offline: { color: 'rgb(102,102,102)', bg: 'rgba(102,102,102,0.15)', text: 'Offline', shadow: 'none' },
-      error: { color: 'rgb(255,92,122)', bg: 'rgba(255,92,122,0.15)', text: 'Error', shadow: 'rgba(255,92,122,0.3)' }
+      error: { color: 'rgb(255,92,122)', bg: 'rgba(255,92,122,0.15)', text: 'Error', shadow: 'rgba(255,92,122,0.3)' },
+      logging: { color: 'rgb(255,165,0)', bg: 'rgba(255,165,0,0.15)', text: 'Logging Only', shadow: 'rgba(255,165,0,0.3)' }
     };
     const s = statuses[status] || statuses.offline;
     statusDot.style.background = s.color;
@@ -140,6 +145,13 @@
       soundToggle.textContent = soundEnabled ? '🔊' : '🔇';
     } catch {}
   }
+
+  connectionIndicator.onclick = () => {
+    if (!chatConnected && !chatConnecting) {
+      reconnectAttempts = 0;
+      ensureChatClient();
+    }
+  };
 
   function pushOverlayLine(who, text, hue, kind) {
     const row = document.createElement('div');
@@ -185,6 +197,7 @@
     }, CONFIG.MESSAGE_LIFETIME_MS);
   }
 
+  // ==================== INPUT UI ====================
   const inputWrap = document.createElement('div');
   Object.assign(inputWrap.style, {
     position: 'fixed',
@@ -269,6 +282,7 @@
   inputWrap.appendChild(input);
   inputWrap.appendChild(sendBtn);
 
+  // ==================== AUTH MODAL ====================
   const authModal = document.createElement('div');
   Object.assign(authModal.style, {
     position: 'fixed',
@@ -296,7 +310,7 @@
   });
 
   const authTitle = document.createElement('h3');
-  authTitle.textContent = 'Authorization';
+  authTitle.textContent = 'Chat Authorization';
   Object.assign(authTitle.style, {
     margin: '0 0 4px 0',
     color: '#ddd',
@@ -304,6 +318,16 @@
     fontSize: '13pt',
     textAlign: 'center',
     fontWeight: 'normal'
+  });
+
+  const authDesc = document.createElement('p');
+  authDesc.textContent = 'Enter PIN code to enable chat messaging';
+  Object.assign(authDesc.style, {
+    margin: '0 0 8px 0',
+    color: '#aaa',
+    fontFamily: 'Play, sans-serif',
+    fontSize: '10pt',
+    textAlign: 'center'
   });
 
   const authInput = document.createElement('input');
@@ -330,6 +354,7 @@
   authCancel.style.fontSize = '11pt';
 
   authBox.appendChild(authTitle);
+  authBox.appendChild(authDesc);
   authBox.appendChild(authInput);
   btnRow.appendChild(authBtn);
   btnRow.appendChild(authCancel);
@@ -390,6 +415,7 @@
     if (e.key === 'Escape') authCancel.click();
   };
 
+  // ==================== UI MOUNTING ====================
   function anchorOverlayToCanvas() {
     const canvas = document.querySelector('canvas');
     if (!canvas) return;
@@ -468,6 +494,7 @@
     if (overlay.parentNode) clearInterval(uiInterval);
   }, 50);
 
+  // ==================== INPUT HANDLING ====================
   let isInputOpen = false;
   const inputHistory = [];
   let inputHistoryIndex = -1;
@@ -581,6 +608,7 @@
     }
   }, true);
 
+  // ==================== COOKIE MANAGEMENT ====================
   function setAuthCookie(pin) {
     const d = new Date();
     d.setTime(d.getTime() + (CONFIG.COOKIE_EXPIRY_DAYS * 24 * 60 * 60 * 1000));
@@ -610,6 +638,7 @@
     return null;
   }
 
+  // ==================== PING/PONG ====================
   function startPingTimer() {
     stopPingTimer();
     pingTimer = setInterval(() => {
@@ -651,31 +680,39 @@
     }, CONFIG.CONNECT_TIMEOUT_MS);
   }
 
+  // ==================== WEBSOCKET CONNECTION ====================
+  function getServerUrl() {
+    if (CONFIG.SERVER_URL) return CONFIG.SERVER_URL;
+    
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host || 'localhost:8080';
+    return `${protocol}//${host}`;
+  }
+
   async function ensureChatClient() {
     if (chatWs && (chatWs.readyState === WebSocket.OPEN || chatWs.readyState === WebSocket.CONNECTING)) return;
     if (chatConnecting) return;
 
-    const pin = await getOrAskPin();
-    if (!pin) return;
-
-    if (pin.length < CONFIG.MIN_PIN_LENGTH || pin.length > CONFIG.MAX_PIN_LENGTH) {
-      console.error('[JuliaChat] Invalid PIN length');
-      alert('Invalid PIN length. Please try again.');
-      return;
-    }
-
+    // Всегда пытаемся подключиться, даже без PIN (для логирования)
     chatConnecting = true;
     updateConnectionStatus('connecting');
 
-    chatWs = new WebSocket(CONFIG.SERVER_URL);
-    chatWs._tempPin = pin;
+    const serverUrl = getServerUrl();
+    chatWs = new WebSocket(serverUrl);
 
     startConnectTimeout();
 
     chatWs.onopen = () => {
       stopConnectTimeout();
       chatConnecting = false;
-      chatWs.send(JSON.stringify({ type: 'auth', pin: pin }));
+      
+      // Если есть PIN, он будет отправлен вместе с join сообщением
+      // Отдельная auth больше не нужна - сервер проверяет PIN при join
+      console.log('[JuliaChat] Connected to server');
+      updateConnectionStatus('online');
+      chatConnected = true;
+      startPingTimer();
+      trySendJoinPresence();
     };
 
     chatWs.onmessage = (event) => {
@@ -686,20 +723,30 @@
       }
 
       if (data.type === 'auth_success') {
+        // Успешная аутентификация через join
         chatConnected = true;
         reconnectAttempts = 0;
-        if (chatWs._tempPin) {
-          setAuthCookie(chatWs._tempPin);
-          chatWs._tempPin = null;
+        authFailed = false;
+        if (pinCode) {
+          setAuthCookie(pinCode);
         }
         updateConnectionStatus('online');
         startPingTimer();
-        trySendJoinPresence();
+        console.log('[JuliaChat] Authenticated successfully');
+      } else if (data.type === 'connected') {
+        // Подключение в режиме логирования (без PIN или неверный PIN)
+        chatConnected = true;
+        ownId = data.id;
+        updateConnectionStatus('logging');
+        console.log('[JuliaChat] Connected in logging-only mode');
       } else if (data.type === 'error') {
         if (data.message === 'Invalid PIN') {
           clearAuthCookie();
-          try { chatWs.close(); } catch { }
-          alert('Invalid PIN. Please try again.');
+          authFailed = true;
+          pinCode = null;
+          updateConnectionStatus('error');
+          // Не закрываем соединение - остаёмся в режиме логирования
+          console.log('[JuliaChat] Invalid PIN, staying in logging mode');
         }
       } else if (data.type === 'chat') {
         const senderId = data.id != null ? (data.id >>> 0) : 0;
@@ -730,6 +777,8 @@
           chatParticipants.delete(senderId);
           if (!isSelf) pushOverlayLine(data.name || ('ID' + senderId), 'left chat', null, 'presence');
         }
+      } else if (data.type === 'pong') {
+        // Keep-alive ответ от сервера
       }
     };
 
@@ -757,12 +806,11 @@
 
     updateConnectionStatus('offline');
 
-    if (hadCookie && shouldReconnect) {
+    if ((hadCookie || pinCode) && shouldReconnect && !authFailed) {
       reconnectAttempts++;
       if (reconnectAttempts >= CONFIG.MAX_RECONNECT_ATTEMPTS) {
         reconnectAttempts = 0;
         console.error('[JuliaChat] Max reconnect attempts reached');
-        alert('Connection lost. Please refresh the page or try again.');
         return;
       }
 
@@ -777,19 +825,27 @@
   }
 
   function trySendJoinPresence() {
-    if (!chatWs || !chatConnected) return;
+    if (!chatWs || chatWs.readyState !== WebSocket.OPEN) return;
     if (!currentGameKey || ownId == null) return;
 
     const tag = currentGameKey + '|' + ownId;
     if (hasJoinedChat && joinedTag === tag) return;
 
-    chatWs.send(JSON.stringify({
+    // Отправляем join с PIN-кодом если он есть
+    const joinData = {
       type: 'join',
       game: currentGameKey,
       id: ownId,
       name: selfName || 'Unknown',
       hue: (selfHue ?? 0)
-    }));
+    };
+    
+    // Добавляем PIN только если он установлен
+    if (pinCode) {
+      joinData.pin = pinCode;
+    }
+
+    chatWs.send(JSON.stringify(joinData));
 
     hasJoinedChat = true;
     joinedTag = tag;
@@ -803,21 +859,45 @@
       console.warn('[JuliaChat] Rate limit exceeded');
       return;
     }
-    if (!chatConnected) {
-      ensureChatClient();
+    
+    // Проверяем, аутентифицированы ли мы
+    if (!chatConnected || !pinCode) {
+      console.warn('[JuliaChat] Cannot send message: not authenticated');
+      // Пытаемся запросить PIN
+      getOrAskPin().then(pin => {
+        if (pin) {
+          pinCode = pin;
+          ensureChatClient();
+        }
+      });
       return;
     }
+    
     chatWs.send(JSON.stringify({ type: 'chat', text: String(text) }));
     lastMessageTime = currentTime;
   }
 
   function trySendFromInput() {
-    if (!chatConnected) {
-      ensureChatClient();
-      return;
-    }
     const text = input.value;
     if (!text) return;
+    
+    if (!chatConnected || !pinCode) {
+      getOrAskPin().then(pin => {
+        if (pin) {
+          pinCode = pin;
+          ensureChatClient().then(() => {
+            if (chatConnected) {
+              addToInputHistory(text);
+              sendChatText(text);
+              input.value = '';
+              inputHistoryIndex = inputHistory.length;
+            }
+          });
+        }
+      });
+      return;
+    }
+    
     addToInputHistory(text);
     sendChatText(text);
     input.value = '';
@@ -836,6 +916,7 @@
 
   sendBtn.addEventListener('click', trySendFromInput);
 
+  // ==================== GAME STATE DETECTION ====================
   function findSettingsNode() {
     const root = window.module && window.module.exports && window.module.exports.settings;
     if (!root || typeof root !== 'object') return null;
@@ -982,6 +1063,7 @@
     }
   }, CONFIG.SNAPSHOT_CHECK_INTERVAL_MS);
 
+  // ==================== VISIBILITY & API ====================
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       isChatVisible = false;
@@ -999,6 +1081,7 @@
     toggle: toggleChatInput,
     isConnected: () => chatConnected,
     isConnecting: () => chatConnecting,
+    isAuthenticated: () => chatConnected && pinCode !== null,
     getParticipants: () => Array.from(chatParticipants),
     getConfig: () => ({ ...CONFIG }),
     getUnreadCount: () => unreadCount,
@@ -1008,9 +1091,13 @@
       soundToggle.textContent = enabled ? '🔊' : '🔇';
       try { localStorage.setItem('juliaChatSound', String(enabled)); } catch {}
     },
+    setServerUrl: (url) => {
+      CONFIG.SERVER_URL = url;
+    },
     reconnect: () => {
       shouldReconnect = true;
       reconnectAttempts = 0;
+      authFailed = false;
       ensureChatClient();
     },
     disconnect: () => {
@@ -1026,6 +1113,22 @@
         chatReconnectTimer = null;
       }
       updateConnectionStatus('offline');
+    },
+    setPin: (pin) => {
+      pinCode = pin;
+      if (pin) {
+        setAuthCookie(pin);
+      } else {
+        clearAuthCookie();
+      }
     }
   };
+
+  // Попытка получить сохранённый PIN при загрузке
+  (async () => {
+    const savedPin = getAuthCookie();
+    if (savedPin) {
+      pinCode = savedPin;
+    }
+  })();
 })();
